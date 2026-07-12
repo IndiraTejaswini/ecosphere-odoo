@@ -29,7 +29,12 @@ export default function LineNavbar({
   const smoothingRef = useRef(smoothing);
   const [activeIndex, setActiveIndex] = useState(defaultActive);
 
-  activeRef.current = activeIndex;
+  // Sync state modifications coming from external browser history pops
+  useEffect(() => {
+    setActiveIndex(defaultActive);
+    activeRef.current = defaultActive;
+  }, [defaultActive]);
+
   smoothingRef.current = smoothing;
 
   const runFrame = useCallback(now => {

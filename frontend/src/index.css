@@ -48,3 +48,82 @@
 @keyframes dash {
   to { stroke-dashoffset: 0; }
 }
+
+.line-sidebar {
+  display: block;
+  width: 100%;
+  user-select: none;
+}
+
+.line-sidebar__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--item-gap, 20px);
+}
+
+.line-sidebar__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+/* --- Interactive Line Markers --- */
+.line-sidebar__marker {
+  position: absolute;
+  left: 0;
+  width: var(--marker-length, 60px);
+  height: 2px;
+  /* Mix default state marker color with brand accent dynamically based on pointer proximity */
+  background-color: color-mix(
+    in srgb, 
+    var(--accent-color) calc(var(--effect, 0) * 100%), 
+    var(--marker-color)
+  );
+  border-radius: 99px;
+  transform-origin: left center;
+  /* Applies dynamic scaling effect to ticks if enabled */
+  transform: scaleX(
+    calc(1 + (var(--effect, 0) * var(--tick-scale, 0.5)))
+  );
+}
+
+/* --- Typography Layout with Dynamic Shift --- */
+.line-sidebar__label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--font-size, 1.1rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  /* Linearly shifts text rightwards as pointer gets closer */
+  transform: translateX(
+    calc(var(--marker-length, 60px) + var(--marker-gap, 0px) + (var(--effect, 0) * var(--max-shift, 30px)))
+  );
+  
+  /* Gradual text color shift based on proximity variable */
+  color: color-mix(
+    in srgb,
+    var(--accent-color) calc(var(--effect, 0) * 100%),
+    var(--text-color)
+  );
+}
+
+.line-sidebar__index {
+  font-family: monospace;
+  font-size: 0.75em;
+  opacity: 0.6;
+}
+
+.line-sidebar__text {
+  transition: opacity 0.2s ease;
+}
+
+/* Active State Safety fallback layer */
+.line-sidebar__item[aria-current="true"] .line-sidebar__label {
+  color: var(--accent-color);
+}

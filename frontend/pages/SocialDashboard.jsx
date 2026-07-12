@@ -67,14 +67,14 @@ export default function SocialDashboard() {
   };
 
   return (
-    <div className="p-6 min-h-screen bg-slate-50 text-slate-900">
+    <div className="text-slate-900 w-full space-y-6">
       {/* 1. TOP SUB-NAVIGATION TABS */}
-      <div className="flex space-x-2 border-b border-slate-300 mb-6 pb-2 overflow-x-auto">
+      <div className="flex space-x-2 border-b border-slate-300 pb-2 overflow-x-auto">
         {['CSR Activities', 'Employee Participation', 'Diversity Dashboard'].map((tab) => (
           <button
             key={tab}
             onClick={() => handleTabChange(tab)}
-            className={`px-4 py-2 rounded-t-lg font-bold text-sm transition-all whitespace-nowrap ${
+            className={`px-4 py-2 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap ${
               activeSubTab === tab 
                 ? 'text-white shadow-sm font-black' 
                 : 'bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-100 border border-slate-300 border-b-0'
@@ -87,11 +87,11 @@ export default function SocialDashboard() {
       </div>
 
       {/* 2. DYNAMIC WORKSPACE UTILITY ACTIONS LAYER */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex items-center flex-wrap gap-2">
           <button 
             onClick={() => alert(`Launching configurator: + New ${activeSubTab.replace('ies', 'y').replace('s', '')}`)}
-            className="text-white px-4 py-2 rounded font-bold text-sm shadow-sm transition-all hover:opacity-90"
+            className="text-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm transition-all hover:opacity-90"
             style={{ backgroundColor: electricBlue }}
           >
             + New {activeSubTab === 'Diversity Dashboard' ? 'Metric Node' : activeSubTab === 'Employee Participation' ? 'Log entry' : 'Activity'}
@@ -102,7 +102,7 @@ export default function SocialDashboard() {
               <button 
                 disabled={!selectedRowId}
                 onClick={() => alert(`Modify Item Reference Target Payload ID: ${selectedRowId}`)}
-                className={`px-4 py-2 rounded font-bold text-sm transition-all border ${
+                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all border ${
                   selectedRowId ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                 }`}
               >
@@ -114,7 +114,7 @@ export default function SocialDashboard() {
                   alert(`Purging index: ${selectedRowId}`);
                   setSelectedRowId(null);
                 }}
-                className={`px-4 py-2 rounded font-bold text-sm transition-all border ${
+                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all border ${
                   selectedRowId ? 'bg-red-600 text-white border-red-700 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                 }`}
               >
@@ -125,7 +125,7 @@ export default function SocialDashboard() {
           
           <button 
             onClick={() => alert(`Generating localized data CSV payload for ${activeSubTab}`)}
-            className="bg-white hover:bg-slate-50 text-slate-900 px-4 py-2 rounded font-bold text-sm border border-slate-300 transition-all shadow-sm"
+            className="bg-white hover:bg-slate-50 text-slate-900 px-4 py-2 rounded-xl font-bold text-sm border border-slate-300 transition-all shadow-sm"
           >
             Export ▾
           </button>
@@ -137,8 +137,8 @@ export default function SocialDashboard() {
             placeholder={`Filter through ${activeSubTab.toLowerCase()}...`}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="bg-white border border-slate-300 text-slate-900 rounded px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 transition-all placeholder-slate-400 font-medium"
-            style={{ '--tw-ring-color': electricBlue } /* dynamic inline placeholder mapping */}
+            className="bg-white border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 transition-all placeholder-slate-400 font-medium"
+            style={{ '--tw-ring-color': electricBlue }}
           />
         </div>
       </div>
@@ -174,7 +174,7 @@ export default function SocialDashboard() {
 
                   <button
                     onClick={() => handleToggleJoin(activity.id)}
-                    className="mt-5 w-full py-1.5 rounded text-xs font-black tracking-wide border transition-all"
+                    className="mt-5 w-full py-1.5 rounded-lg text-xs font-black tracking-wide border transition-all"
                     style={activity.joined 
                       ? { backgroundColor: '#f1f5f9', color: '#334155', borderColor: '#cbd5e1' } 
                       : { backgroundColor: electricBlue, color: '#ffffff', borderColor: electricBlue }
@@ -259,7 +259,7 @@ export default function SocialDashboard() {
                 <button
                   disabled={!selectedRowId}
                   onClick={() => handleProcessQueue('Rejected')}
-                  className={`px-4 py-1.5 rounded font-black text-xs uppercase tracking-wide border transition-all ${
+                  className={`px-4 py-1.5 rounded-xl font-black text-xs uppercase tracking-wide border transition-all ${
                     selectedRowId ? 'bg-red-600 text-white border-red-700 hover:bg-red-700 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                   }`}
                 >
@@ -268,7 +268,7 @@ export default function SocialDashboard() {
                 <button
                   disabled={!selectedRowId}
                   onClick={() => handleProcessQueue('Approved')}
-                  className={`px-4 py-1.5 rounded font-black text-xs uppercase tracking-wide border transition-all ${
+                  className={`px-4 py-1.5 rounded-xl font-black text-xs uppercase tracking-wide border transition-all ${
                     selectedRowId ? 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                   }`}
                 >
@@ -311,7 +311,7 @@ export default function SocialDashboard() {
                     <td className="p-4 font-mono text-xs underline" style={{ color: electricBlue }}>🔗 {row.proofUrl}</td>
                     <td className="p-4 text-right font-mono text-slate-950">+{row.points} XP</td>
                     <td className="p-4 text-center">
-                      <span className={`px-2.5 py-0.5 rounded text-xs font-black border ${row.status === 'Approved' ? 'bg-green-50 text-green-700 border-green-300' : row.status === 'Rejected' ? 'bg-red-50 text-red-700 border-rose-300' : 'bg-amber-50 text-amber-600 border-amber-300'}`}>
+                      <span className={`px-2.5 py-0.5 rounded-xl text-xs font-black border ${row.status === 'Approved' ? 'bg-green-50 text-green-700 border-green-300' : row.status === 'Rejected' ? 'bg-red-50 text-red-700 border-rose-300' : 'bg-amber-50 text-amber-600 border-amber-300'}`}>
                         {row.status}
                       </span>
                     </td>
@@ -391,11 +391,10 @@ export default function SocialDashboard() {
       )}
 
       {/* 4. UNIFIED COMPLIANCE FOOTER SIGNATURE NOTE */}
-      <div className="mt-6 pt-4 border-t border-slate-200 flex items-center text-xs text-slate-800 font-bold italic bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
+      <div className="pt-4 border-t border-slate-200 flex items-center text-xs text-slate-800 font-bold italic bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
         <span className="mr-2 font-black text-sm select-none" style={{ color: electricBlue }}>ℹ</span>
         <span>Corporate Social Responsibility (CSR) impact statements are audit-logged for annual ESG disclosure reporting.</span>
       </div>
-
     </div>
   );
 }

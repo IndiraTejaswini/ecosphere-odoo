@@ -7,17 +7,24 @@ import AnalyticsSection from '../components/dashboard/AnalyticsSection';
 import RecentActivity from '../components/dashboard/RecentActivity';
 import QuickActions from '../components/dashboard/QuickActions';
 
+import EnvironmentalDashboard from './EnvironmentalDashboard';
+import SocialDashboard from './SocialDashboard'; 
+import GamificationDashboard from './GamificationDashboard';
+import GovernanceDashboard from './GovernanceDashboard';
+import ReportsDashboard from './ReportsDashboard';
+import SettingsDashboard from './SettingsDashboard';
+
 export default function Dashboard({ currentTab, onTabChange }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
 
   const navLabels = [
-    'Overview', 
-    'Environmental', 
-    'Social', 
-    'Governance', 
-    'Gamification', 
-    'Reports', 
+    'Overview',
+    'Environmental',
+    'Social',
+    'Governance',
+    'Gamification',
+    'Reports',
     'Settings'
   ];
 
@@ -33,8 +40,83 @@ export default function Dashboard({ currentTab, onTabChange }) {
 
   const handleNavigationClick = (index) => {
     const targetLabel = navLabels[index];
-    if (targetLabel === 'Overview' || targetLabel === 'Environmental' || targetLabel === 'Social' || targetLabel === 'Governance') {
+    if (targetLabel && onTabChange) {
       onTabChange(targetLabel);
+    }
+  };
+
+  const renderMainContent = () => {
+    switch (currentTab) {
+      case 'Environmental':
+        return <EnvironmentalDashboard />;
+      case 'Social': 
+        return <SocialDashboard />;
+      case 'Gamification':
+        return <GamificationDashboard />;
+      case 'Governance':
+        return <GovernanceDashboard />;
+      case 'Reports':
+        return <ReportsDashboard />;
+      case 'Settings':
+        return <SettingsDashboard />;
+      case 'Overview':
+      default:
+        return (
+          <>
+            <div className="bg-white rounded-3xl border border-slate-200/60 p-8 shadow-3xs relative overflow-hidden group hover:shadow-2xs transition-all duration-300">
+              <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-blue-50/30 to-transparent rounded-full -mr-16 -mt-16 pointer-events-none z-0" />
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-center relative z-10">
+                <div className="lg:col-span-3 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-extrabold tracking-widest text-white bg-[#163fa1] px-3 py-1 rounded-md uppercase shadow-xs">
+                      Operational Core
+                    </span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-200" />
+                    <span className="text-[11px] font-mono text-slate-400 font-bold tracking-tight">PLATFORM PARAMETER DEPLOYMENT</span>
+                  </div>
+                  <h2 className="text-xl font-black tracking-tight text-[#0f2438] sm:text-3xl">
+                    EcoSphere: Real-Time ESG Aggregator Engine
+                  </h2>
+                  <p className="text-sm text-slate-500 leading-relaxed font-medium">
+                    This matrix bridges the gap between active ERP processing systems and auditable organizational metrics. By translating day-to-day manufacturing operations, employee CSR engagement channels, and risk mitigation procedures into real-time ledger layers, EcoSphere delivers a single point of truth for corporate governance compliance.
+                  </p>
+                </div>
+                <div className="lg:col-span-1 grid grid-cols-3 lg:grid-cols-1 gap-3 w-full border-t lg:border-t-0 lg:border-l border-slate-200/60 pt-6 lg:pt-0 lg:pl-8">
+                  <div className="text-center lg:text-left">
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Environmental</span>
+                    <span className="text-sm font-black text-emerald-600 font-mono">40% Alloc</span>
+                  </div>
+                  <div className="text-center lg:text-left">
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Social Index</span>
+                    <span className="text-sm font-black text-sky-600 font-mono">30% Alloc</span>
+                  </div>
+                  <div className="text-center lg:text-left">
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Governance</span>
+                    <span className="text-sm font-black text-[#A10559] font-mono">30% Alloc</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              <ScoreCard title="Environmental Score" score={82} glowColor="16, 185, 129" metricColor="text-emerald-600" />
+              <ScoreCard title="Social Score" score={74} glowColor="14, 165, 233" metricColor="text-sky-600" />
+              <ScoreCard title="Governance Score" score={88} glowColor="161, 5, 89" customGlowHex="#A10559" metricColor="text-[#A10559]" /> 
+              <ScoreCard title="Overall ESG Score" score={81} glowColor="71, 85, 105" metricColor="text-slate-700" isOverall />
+            </div>
+
+            <AnalyticsSection />
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2">
+                <RecentActivity />
+              </div>
+              <div className="lg:col-span-1">
+                <QuickActions />
+              </div>
+            </div>
+          </>
+        );
     }
   };
 
@@ -66,7 +148,7 @@ export default function Dashboard({ currentTab, onTabChange }) {
 
         <div className="hidden md:block">
           <LineNavbar 
-            items={navLabels.slice(0, 5)}
+            items={navLabels}
             accentColor="#163fa1"
             textColor="#64748B"
             fontSize={0.85}
@@ -109,20 +191,23 @@ export default function Dashboard({ currentTab, onTabChange }) {
             </button>
           </div>
 
-          <div className="flex-1 px-8 py-12 overflow-y-auto flex items-center justify-start">
+          <div className="flex-1 px-6 py-8 overflow-y-auto flex flex-col justify-start">
             {isSidebarOpen && (
               <LineSidebar 
                 items={navLabels}
-                accentColor="#163fa1" 
+                accentColor="#163fa1"
                 textColor="#64748B"
-                markerColor="#E2E8F0"
-                fontSize={1.25}
-                itemGap={26}
-                maxShift={28}
+                markerColor="#CBD5E1"
+                showIndex={true}
+                showMarker={true}
+                fontSize={1.05}
+                itemGap={22}
+                maxShift={24}
+                proximityRadius={110}
                 defaultActive={activeIndex}
                 onItemClick={(idx) => {
                   handleNavigationClick(idx);
-                  setIsSidebarOpen(false); 
+                  setIsSidebarOpen(false);
                 }}
               />
             )}
@@ -131,60 +216,7 @@ export default function Dashboard({ currentTab, onTabChange }) {
       </div>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in">
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 shadow-3xs relative overflow-hidden group hover:shadow-2xs transition-all duration-300">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-blue-50/30 to-transparent rounded-full -mr-16 -mt-16 pointer-events-none z-0" />
-          
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-center relative z-10">
-            <div className="lg:col-span-3 space-y-4">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-extrabold tracking-widest text-white bg-[#163fa1] px-3 py-1 rounded-md uppercase shadow-xs">
-                  Operational Core
-                </span>
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-200" />
-                <span className="text-[11px] font-mono text-slate-400 font-bold tracking-tight">PLATFORM PARAMETER DEPLOYMENT</span>
-              </div>
-              <h2 className="text-xl font-black tracking-tight text-[#0f2438] sm:text-3xl">
-                EcoSphere: Real-Time ESG Aggregator Engine
-              </h2>
-              <p className="text-sm text-slate-500 leading-relaxed font-medium">
-                This matrix bridges the gap between active ERP processing systems and auditable organizational metrics. By translating day-to-day manufacturing operations, employee CSR engagement channels, and risk mitigation procedures into real-time ledger layers, EcoSphere delivers a single point of truth for corporate governance compliance.
-              </p>
-            </div>
-
-            <div className="lg:col-span-1 grid grid-cols-3 lg:grid-cols-1 gap-3 w-full border-t lg:border-t-0 lg:border-l border-slate-200/60 pt-6 lg:pt-0 lg:pl-8">
-              <div className="text-center lg:text-left">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Environmental</span>
-                <span className="text-sm font-black text-emerald-600 font-mono">40% Alloc</span>
-              </div>
-              <div className="text-center lg:text-left">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Social Index</span>
-                <span className="text-sm font-black text-sky-600 font-mono">30% Alloc</span>
-              </div>
-              <div className="text-center lg:text-left">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Governance</span>
-                <span className="text-sm font-black text-[#A10559] font-mono">30% Alloc</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <ScoreCard title="Environmental Score" score={82} glowColor="16, 185, 129" metricColor="text-emerald-600" />
-          <ScoreCard title="Social Score" score={74} glowColor="14, 165, 233" metricColor="text-sky-600" />
-          <ScoreCard title="Governance Score" score={88} glowColor="161, 5, 89" customGlowHex="#A10559" metricColor="text-[#A10559]" /> 
-          <ScoreCard title="Overall ESG Score" score={81} glowColor="71, 85, 105" metricColor="text-slate-700" isOverall />
-        </div>
-
-        <AnalyticsSection />
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <RecentActivity />
-          </div>
-          <div className="lg:col-span-1">
-            <QuickActions />
-          </div>
-        </div>
+         {renderMainContent()}
       </main>
     </div>
   );
