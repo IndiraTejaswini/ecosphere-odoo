@@ -1,0 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=Cedarville+Cursive&family=Outfit:wght@100..900&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  /* By naming this --font-sans, you override Tailwind's default sans font */
+  --font-sans: "Outfit", sans-serif;
+  
+  /* You can still keep other fonts for specific elements */
+  --font-cursive: "Cedarville Cursive", cursive;
+}
