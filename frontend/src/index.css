@@ -1,11 +1,50 @@
-@import url('https://fonts.googleapis.com/css2?family=Cedarville+Cursive&family=Outfit:wght@100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Arizonia&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Outfit:wght@100..900&family=Roboto:ital,wght@0,100..900;1,100..900&family=Rubik:ital,wght@0,300..900;1,300..900&family=Work+Sans:ital,wght@0,100..900;1,100..900&display=swap');
 
 @import "tailwindcss";
 
 @theme {
-  /* By naming this --font-sans, you override Tailwind's default sans font */
+  /* This completely overrides Tailwind's default sans font with Outfit across your app */
   --font-sans: "Outfit", sans-serif;
   
-  /* You can still keep other fonts for specific elements */
-  --font-cursive: "Cedarville Cursive", cursive;
+  /* Fallback template configurations for design variants */
+  --font-cursive: "Arizonia", cursive;
+}
+
+@layer utilities {
+  .dynamic-shadow {
+    shadow: 0 4px 30px rgba(0, 0, 0, 0.02);
+  }
+
+  /* Specific base class configuration for global variable weight styling adjustments */
+  .font-outfit {
+    font-family: "Outfit", sans-serif;
+    font-optical-sizing: auto;
+    font-style: normal;
+  }
+
+  /* Specific base class configuration for Arizonia template cursive style */
+  .font-arizonia-regular {
+    font-family: "Arizonia", cursive;
+    font-weight: 400;
+    font-style: normal;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.path-animation {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: dash 2s ease-in-out forwards;
+}
+
+@keyframes dash {
+  to { stroke-dashoffset: 0; }
 }
