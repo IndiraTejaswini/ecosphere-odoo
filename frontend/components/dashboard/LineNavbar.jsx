@@ -8,8 +8,8 @@ const FALLOFF_CURVES = {
 
 export default function LineNavbar({
   items,
-  accentColor = '#163fa1',
-  textColor = '#64748B',
+  accentColor = '#d946ef',
+  textColor = '#94A3B8',
   proximityRadius = 100,
   maxShift = 6,
   falloff = 'smooth',
@@ -103,7 +103,7 @@ export default function LineNavbar({
         ref={listRef}
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
-        className="m-0 flex list-none flex-row items-center py-2 px-4 rounded-xl bg-slate-100/80 border border-slate-200/50 select-none backdrop-blur-md shadow-inner"
+        className="m-0 flex list-none flex-row items-center py-2 px-4 rounded-xl bg-white border border-slate-200/60 select-none shadow-3xs"
         style={{ gap: `${itemGap}px` }}
       >
         {items.map((label, index) => (
@@ -119,18 +119,16 @@ export default function LineNavbar({
               '--font-size': `${fontSize}rem`
             }}
           >
-            {/* Smooth Gray Interactive Background Mask Pill */}
             <span 
-              className="absolute inset-0 rounded-lg bg-slate-200/60 opacity-0 group-hover:opacity-100 transition-all duration-200 -z-10"
+              className="absolute inset-0 rounded-lg bg-slate-100 opacity-0 group-hover:opacity-100 transition-all duration-200 -z-10"
               style={{
                 transform: 'scale(calc(0.95 + var(--effect, 0) * 0.05))',
               }}
             />
-            
             <span 
               className="relative inline-flex items-center font-bold tracking-wide transition-all duration-75 leading-none"
               style={{
-                color: `color-mix(in srgb, ${accentColor} calc(var(--effect, 0) * 100%), ${textColor})`,
+                color: `color-mix(in_srgb, ${accentColor} calc(var(--effect, 0) * 100%), ${textColor})`,
                 transform: 'translateX(calc(var(--effect, 0) * var(--max-shift)))',
                 fontSize: 'var(--font-size)'
               }}
