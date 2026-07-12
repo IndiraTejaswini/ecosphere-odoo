@@ -1,13 +1,13 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 
 // 1. Import your components
-import Navbar from './Components/Home/Navbar';
-import HeroSection from './Components/Home/HeroSection'; 
-import FeatureSection from './Components/Home/FeatureSection'; 
-import AboutUs from './Components/Home/AboutUs'; 
-import Faq from './Components/Home/Faq';
-import Testimonals from './Components/Home/Testimonals';
-import Footer from './Components/Home/Footer';
+import Navbar from './components/Home/Navbar';
+import HeroSection from './components/Home/HeroSection'; 
+import FeatureSection from './components/Home/FeatureSection'; 
+import AboutUs from './components/Home/AboutUs'; 
+import Faq from './components/Home/Faq';
+import Testimonals from './components/Home/Testimonals';
+import Footer from './components/Home/Footer';
 
 
 
