@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 
 // Import the image from your assets folder
-import heroBg from '../../assets/hero.png';
+import heroBg from '../../src/assets/hero.png';
 
 // Import your SplitText component (Adjust path if needed)
 import SplitText from './SplitText';

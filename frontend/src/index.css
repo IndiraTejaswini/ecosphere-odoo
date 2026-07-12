@@ -1,9 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Cedarville+Cursive&family=Outfit:wght@100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Arizonia&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Outfit:wght@100..900&family=Roboto:ital,wght@0,100..900;1,100..900&family=Rubik:ital,wght@0,300..900;1,300..900&family=Work+Sans:ital,wght@0,100..900;1,100..900&display=swap');
 
 @import "tailwindcss";
 
 @theme {
-  /* By naming this --font-sans, you override Tailwind's default sans font */
+  /* This completely overrides Tailwind's default sans font with Outfit across your app */
   --font-sans: "Outfit", sans-serif;
   
   /* You can still keep other fonts for specific elements */
@@ -19,4 +19,124 @@
     0% { background-position: 0% center; }
     100% { background-position: 200% center; }
   }
+  /* Fallback template configurations for design variants */
+  --font-cursive: "Arizonia", cursive;
+}
+
+@layer utilities {
+  .dynamic-shadow {
+    shadow: 0 4px 30px rgba(0, 0, 0, 0.02);
+  }
+
+  /* Specific base class configuration for global variable weight styling adjustments */
+  .font-outfit {
+    font-family: "Outfit", sans-serif;
+    font-optical-sizing: auto;
+    font-style: normal;
+  }
+
+  /* Specific base class configuration for Arizonia template cursive style */
+  .font-arizonia-regular {
+    font-family: "Arizonia", cursive;
+    font-weight: 400;
+    font-style: normal;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.path-animation {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: dash 2s ease-in-out forwards;
+}
+
+@keyframes dash {
+  to { stroke-dashoffset: 0; }
+}
+
+.line-sidebar {
+  display: block;
+  width: 100%;
+  user-select: none;
+}
+
+.line-sidebar__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--item-gap, 20px);
+}
+
+.line-sidebar__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+/* --- Interactive Line Markers --- */
+.line-sidebar__marker {
+  position: absolute;
+  left: 0;
+  width: var(--marker-length, 60px);
+  height: 2px;
+  /* Mix default state marker color with brand accent dynamically based on pointer proximity */
+  background-color: color-mix(
+    in srgb, 
+    var(--accent-color) calc(var(--effect, 0) * 100%), 
+    var(--marker-color)
+  );
+  border-radius: 99px;
+  transform-origin: left center;
+  /* Applies dynamic scaling effect to ticks if enabled */
+  transform: scaleX(
+    calc(1 + (var(--effect, 0) * var(--tick-scale, 0.5)))
+  );
+}
+
+/* --- Typography Layout with Dynamic Shift --- */
+.line-sidebar__label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--font-size, 1.1rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  /* Linearly shifts text rightwards as pointer gets closer */
+  transform: translateX(
+    calc(var(--marker-length, 60px) + var(--marker-gap, 0px) + (var(--effect, 0) * var(--max-shift, 30px)))
+  );
+  
+  /* Gradual text color shift based on proximity variable */
+  color: color-mix(
+    in srgb,
+    var(--accent-color) calc(var(--effect, 0) * 100%),
+    var(--text-color)
+  );
+}
+
+.line-sidebar__index {
+  font-family: monospace;
+  font-size: 0.75em;
+  opacity: 0.6;
+}
+
+.line-sidebar__text {
+  transition: opacity 0.2s ease;
+}
+
+/* Active State Safety fallback layer */
+.line-sidebar__item[aria-current="true"] .line-sidebar__label {
+  color: var(--accent-color);
 }

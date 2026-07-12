@@ -2,14 +2,14 @@ import React from 'react';
 import CircularGallery from './CircularGallery';
 
 // Ensure you have these corresponding images in your src/assets/ folder
-import image from '../../assets/image.png'; 
-import feature1Img from '../../assets/feature1.jpg';
-import feature2Img from '../../assets/feature2.jpg';
-import feature3Img from '../../assets/feature3.jpg';
-import feature4Img from '../../assets/feature4.jpg';
-import feature5Img from '../../assets/feature5.jpg';
-import feature6Img from '../../assets/feature6.jpg';
-import feature7Img from '../../assets/feature7.jpg';
+import image from '../../src/assets/image.png'; 
+import feature1Img from '../../src/assets/feature1.jpg';
+import feature2Img from '../../src/assets/feature2.jpg';
+import feature3Img from '../../src/assets/feature3.jpg';
+import feature4Img from '../../src/assets/feature4.jpg';
+import feature5Img from '../../src/assets/feature5.jpg';
+import feature6Img from '../../src/assets/feature6.jpg';
+import feature7Img from '../../src/assets/feature7.jpg';
 
 export default function FeatureSection() {
   const features = [
