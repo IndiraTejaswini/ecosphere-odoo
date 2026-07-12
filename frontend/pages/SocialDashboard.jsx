@@ -1,40 +1,66 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import BentoGlowEffect from '../components/BentoGlowEffect';
 
-// --- MOCK REGISTRY FOR CSR CAMPAIGNS (HORIZONTAL DECK) ---
-const INITIAL_CSR_ACTIVITIES = [
-  { id: 101, title: "Tree Plantation Drive", joinedCount: 42, evidenceRequired: true, joined: false },
-  { id: 102, title: "Annual Blood Donation", joinedCount: 118, evidenceRequired: false, joined: true },
-  { id: 103, title: "Beach Cleanup Initiative", joinedCount: 25, evidenceRequired: true, joined: false },
-  { id: 104, title: "Corporate ESG Workshop", joinedCount: 67, evidenceRequired: false, joined: false },
-];
+// --- BACKEND CONNECTION ---
+import api, { API_BASE_URL } from '../api';
 
-// --- MOCK REGISTRY FOR EMPLOYEE PARTICIPATION APPROVAL QUEUE & LOGS ---
-const INITIAL_PARTICIPATION_QUEUE = [
-  { id: 1, employee: "Sarah Jenkins", activity: "Beach Cleanup Initiative", proofUrl: "cleanup_photo_sj.jpg", points: 150, status: "Pending" },
-  { id: 2, employee: "Michael Chang", activity: "Tree Plantation Drive", proofUrl: "sapling_sap_mc.png", points: 100, status: "Pending" },
-  { id: 3, employee: "Elena Rostova", activity: "Corporate ESG Workshop", proofUrl: "attendance_cert.pdf", points: 50, status: "Approved" },
-  { id: 4, employee: "David Kojo", activity: "Annual Blood Donation", proofUrl: "donor_slip_dk.jpg", points: 200, status: "Pending" },
-];
-
-// --- MOCK DATA FOR THE DIVERSITY DASHBOARD METRICS ---
-const INITIAL_DIVERSITY_METRICS = [
-  { id: 1, metric: "Gender Diversity (Leadership)", department: "Executive Board", currentPct: 42, targetPct: 50, regionalBench: "38%", healthStatus: "On Track" },
-  { id: 2, metric: "Underrepresented Groups", department: "Engineering & R&D", currentPct: 28, targetPct: 35, regionalBench: "22%", healthStatus: "Needs Attention" },
-  { id: 3, metric: "Veterans & Alternative Paths", department: "Global Operations", currentPct: 12, targetPct: 10, regionalBench: "8%", healthStatus: "Target Met" },
-  { id: 4, metric: "Internal Promotion Parity", department: "All Departments", currentPct: 89, targetPct: 90, regionalBench: "85%", healthStatus: "On Track" },
-];
+function formatDate(isoString) {
+  if (!isoString) return '—';
+  return new Date(isoString).toISOString().slice(0, 10);
+}
 
 export default function SocialDashboard() {
   const [activeSubTab, setActiveSubTab] = useState('CSR Activities');
-  const [activities, setActivities] = useState(INITIAL_CSR_ACTIVITIES);
-  const [queue, setQueue] = useState(INITIAL_PARTICIPATION_QUEUE);
-  const [diversityMetrics] = useState(INITIAL_DIVERSITY_METRICS);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRowId, setSelectedRowId] = useState(null);
 
-  // Exact Electric Blue Color Token Definition
-  const electricBlue = "#0086D6";
+  // --- BACKEND CONNECTION: real data ---
+  const [currentUser, setCurrentUser] = useState(null);
+  const [csrActivities, setCsrActivities] = useState([]);
+  const [participations, setParticipations] = useState([]); // shared by CSR Activities' queue panel + Employee Participation tab
+  const [diversityMetrics, setDiversityMetrics] = useState([]);
+  const [settings, setSettings] = useState(null);
+  const [departments, setDepartments] = useState([]);
+  const [csrCategories, setCsrCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const electricBlue = '#0086D6';
+
+  async function loadAllData() {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const [meRes, activitiesRes, participationsRes, diversityRes, settingsRes, deptRes, categoriesRes] = await Promise.all([
+        api.employees.me(),
+        api.csr.listActivities({ limit: 100 }),
+        api.csr.listParticipations({ limit: 100 }),
+        api.diversity.list({ limit: 100 }),
+        api.settings.get(),
+        api.departments.list({ limit: 100 }),
+        api.categories.list({ limit: 100 }),
+      ]);
+      setCurrentUser(meRes);
+      setCsrActivities(activitiesRes.data);
+      setParticipations(participationsRes.data);
+      setDiversityMetrics(diversityRes.data);
+      setSettings(settingsRes);
+      setDepartments(deptRes.data);
+      setCsrCategories(categoriesRes.data.filter((c) => c.type === 'CSR Activity'));
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load social data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAllData();
+  }, []);
 
   const handleTabChange = (tabName) => {
     setActiveSubTab(tabName);
@@ -42,29 +68,81 @@ export default function SocialDashboard() {
     setSelectedRowId(null);
   };
 
-  const handleToggleJoin = (id) => {
-    setActivities(prev => prev.map(act => {
-      if (act.id === id) {
-        return {
-          ...act,
-          joined: !act.joined,
-          joinedCount: act.joined ? act.joinedCount - 1 : act.joinedCount + 1
-        };
-      }
-      return act;
-    }));
-  };
+  function getJoinedCount(activityId) {
+    return participations.filter((p) => p.activity?._id === activityId).length;
+  }
 
-  const handleProcessQueue = (statusTarget) => {
+  function myParticipationFor(activityId) {
+    if (!currentUser) return null;
+    return participations.find((p) => p.activity?._id === activityId && p.employee?._id === currentUser._id);
+  }
+
+  async function handleJoin(activityId) {
+    try {
+      await api.csr.joinActivity(activityId);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Could not join activity');
+    }
+  }
+
+  async function handleProcessQueue(decision) {
     if (!selectedRowId) return;
-    setQueue(prev => prev.map(item => {
-      if (item.id === selectedRowId) {
-        return { ...item, status: statusTarget };
+    try {
+      await api.csr.reviewParticipation(selectedRowId, decision);
+      setSelectedRowId(null);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Review action failed');
+    }
+  }
+
+  function viewProof(proofUrl) {
+    if (!proofUrl) {
+      alert('No proof file attached.');
+      return;
+    }
+    window.open(`${API_BASE_URL}${proofUrl}`, '_blank');
+  }
+
+  // --- BACKEND CONNECTION: "New X" create modals (CSR Activities / Diversity) ---
+  function openCreateModal() {
+    if (activeSubTab === 'CSR Activities') {
+      setFormData({ title: '', category: '', description: '', date: '', location: '', expectedParticipants: '' });
+    } else if (activeSubTab === 'Diversity Dashboard') {
+      setFormData({ department: '', period: new Date().toISOString().slice(0, 7), headcountTotal: '', headcountFemale: '', headcountMale: '', headcountOther: '' });
+    }
+    setIsModalOpen(true);
+  }
+
+  async function handleSave(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (activeSubTab === 'CSR Activities') {
+        await api.csr.createActivity({ ...formData, expectedParticipants: Number(formData.expectedParticipants) || undefined, status: 'Active' });
+      } else if (activeSubTab === 'Diversity Dashboard') {
+        await api.diversity.upsert({
+          ...formData,
+          headcountTotal: Number(formData.headcountTotal),
+          headcountFemale: Number(formData.headcountFemale) || 0,
+          headcountMale: Number(formData.headcountMale) || 0,
+          headcountOther: Number(formData.headcountOther) || 0,
+        });
       }
-      return item;
-    }));
-    setSelectedRowId(null);
-  };
+      setIsModalOpen(false);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+  // --- END create modal handling ---
+
+  if (loading) {
+    return <div className="p-12 text-center text-slate-400 font-bold text-sm">Loading social data...</div>;
+  }
 
   return (
     <div className="text-slate-900 w-full space-y-6">
@@ -86,48 +164,30 @@ export default function SocialDashboard() {
         ))}
       </div>
 
+      {loadError && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold rounded-2xl px-6 py-4">
+          ⚠️ {loadError}
+        </div>
+      )}
+
       {/* 2. DYNAMIC WORKSPACE UTILITY ACTIONS LAYER */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex items-center flex-wrap gap-2">
-          <button 
-            onClick={() => alert(`Launching configurator: + New ${activeSubTab.replace('ies', 'y').replace('s', '')}`)}
-            className="text-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm transition-all hover:opacity-90"
-            style={{ backgroundColor: electricBlue }}
-          >
-            + New {activeSubTab === 'Diversity Dashboard' ? 'Metric Node' : activeSubTab === 'Employee Participation' ? 'Log entry' : 'Activity'}
-          </button>
-          
-          {activeSubTab !== 'CSR Activities' && (
-            <>
-              <button 
-                disabled={!selectedRowId}
-                onClick={() => alert(`Modify Item Reference Target Payload ID: ${selectedRowId}`)}
-                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all border ${
-                  selectedRowId ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                }`}
-              >
-                Edit
-              </button>
-              <button 
-                disabled={!selectedRowId}
-                onClick={() => {
-                  alert(`Purging index: ${selectedRowId}`);
-                  setSelectedRowId(null);
-                }}
-                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all border ${
-                  selectedRowId ? 'bg-red-600 text-white border-red-700 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                }`}
-              >
-                Delete
-              </button>
-            </>
+          {activeSubTab !== 'Employee Participation' && (
+            <button 
+              onClick={openCreateModal}
+              className="text-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm transition-all hover:opacity-90"
+              style={{ backgroundColor: electricBlue }}
+            >
+              + New {activeSubTab === 'Diversity Dashboard' ? 'Metric Entry' : 'Activity'}
+            </button>
           )}
           
           <button 
-            onClick={() => alert(`Generating localized data CSV payload for ${activeSubTab}`)}
+            onClick={() => api.reports.exportCsv({ module: 'social' }).catch((err) => alert(err.message))}
             className="bg-white hover:bg-slate-50 text-slate-900 px-4 py-2 rounded-xl font-bold text-sm border border-slate-300 transition-all shadow-sm"
           >
-            Export ▾
+            Export CSV
           </button>
         </div>
 
@@ -138,7 +198,6 @@ export default function SocialDashboard() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="bg-white border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 transition-all placeholder-slate-400 font-medium"
-            style={{ '--tw-ring-color': electricBlue }}
           />
         </div>
       </div>
@@ -148,42 +207,54 @@ export default function SocialDashboard() {
       {/* ================= VIEW 1: CSR ACTIVITIES ================= */}
       {activeSubTab === 'CSR Activities' && (
         <div className="space-y-8">
+          {settings?.evidenceRequirementEnabled && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold rounded-xl px-4 py-2.5">
+              📷 Evidence Requirement is enabled organization-wide — every activity below requires a proof file before approval (this is a global Settings toggle, not per-activity).
+            </div>
+          )}
+
           <div>
             <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-4">Active Events Deck</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {activities.filter(act => act.title.toLowerCase().includes(searchTerm.toLowerCase())).map((activity) => (
-                <div 
-                  key={activity.id} 
-                  className="bg-white border border-slate-300 p-5 rounded-2xl shadow-sm flex flex-col justify-between transition-all hover:border-slate-400"
-                >
-                  <div>
-                    <div className="flex justify-between items-start gap-2 mb-2">
-                      <h4 className="font-black text-slate-900 tracking-tight text-base leading-tight">
-                        {activity.title}
-                      </h4>
-                      {activity.evidenceRequired && (
-                        <span className="text-[9px] font-black bg-amber-50 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded tracking-wide uppercase whitespace-nowrap">
-                          📷 Proof Req.
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs font-bold text-slate-500 mt-1">
-                      Members: <span className="text-black font-black">{activity.joinedCount}</span>
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => handleToggleJoin(activity.id)}
-                    className="mt-5 w-full py-1.5 rounded-lg text-xs font-black tracking-wide border transition-all"
-                    style={activity.joined 
-                      ? { backgroundColor: '#f1f5f9', color: '#334155', borderColor: '#cbd5e1' } 
-                      : { backgroundColor: electricBlue, color: '#ffffff', borderColor: electricBlue }
-                    }
+              {csrActivities.filter(act => act.title.toLowerCase().includes(searchTerm.toLowerCase())).map((activity) => {
+                const myParticipation = myParticipationFor(activity._id);
+                return (
+                  <div 
+                    key={activity._id} 
+                    className="bg-white border border-slate-300 p-5 rounded-2xl shadow-sm flex flex-col justify-between transition-all hover:border-slate-400"
                   >
-                    {activity.joined ? '✓ Joined' : 'Join'}
-                  </button>
-                </div>
-              ))}
+                    <div>
+                      <div className="flex justify-between items-start gap-2 mb-2">
+                        <h4 className="font-black text-slate-900 tracking-tight text-base leading-tight">
+                          {activity.title}
+                        </h4>
+                        {settings?.evidenceRequirementEnabled && (
+                          <span className="text-[9px] font-black bg-amber-50 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded tracking-wide uppercase whitespace-nowrap">
+                            📷 Proof Req.
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs font-bold text-slate-500 mt-1">
+                        Members: <span className="text-black font-black">{getJoinedCount(activity._id)}</span>
+                      </p>
+                      <p className="text-[10px] font-mono text-slate-400 mt-1">{formatDate(activity.date)} · {activity.location || 'No location set'}</p>
+                    </div>
+
+                    <button
+                      onClick={() => !myParticipation && handleJoin(activity._id)}
+                      disabled={Boolean(myParticipation)}
+                      className="mt-5 w-full py-1.5 rounded-lg text-xs font-black tracking-wide border transition-all disabled:cursor-default"
+                      style={myParticipation 
+                        ? { backgroundColor: '#f1f5f9', color: '#334155', borderColor: '#cbd5e1' } 
+                        : { backgroundColor: electricBlue, color: '#ffffff', borderColor: electricBlue }
+                      }
+                    >
+                      {myParticipation ? `✓ ${myParticipation.approvalStatus}` : 'Join'}
+                    </button>
+                  </div>
+                );
+              })}
+              {csrActivities.length === 0 && <p className="text-sm text-slate-400 font-bold">No CSR activities yet.</p>}
             </div>
           </div>
 
@@ -199,53 +270,50 @@ export default function SocialDashboard() {
                   <tr>
                     <th className="p-4 w-8"></th>
                     <th className="p-4">Employee</th>
-                    <th className="p-4">Activity / Challenge</th>
+                    <th className="p-4">Activity</th>
                     <th className="p-4">Proof Attachment</th>
                     <th className="p-4 text-right">Points Value</th>
                     <th className="p-4 text-center">Status Badge</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                  {queue.map((row) => (
+                  {participations.filter((p) => p.approvalStatus === 'Pending').map((row) => (
                     <tr 
-                      key={row.id} 
+                      key={row._id} 
                       className="hover:bg-slate-50 transition-colors cursor-pointer"
-                      style={selectedRowId === row.id ? { backgroundColor: 'rgba(0, 134, 214, 0.08)' } : {}}
-                      onClick={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
+                      style={selectedRowId === row._id ? { backgroundColor: 'rgba(0, 134, 214, 0.08)' } : {}}
+                      onClick={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)}
                     >
                       <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                         <input 
                           type="checkbox" 
-                          checked={selectedRowId === row.id} 
-                          onChange={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
+                          checked={selectedRowId === row._id} 
+                          onChange={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)}
                           className="rounded border-slate-400 focus:ring-blue-500"
-                          style={{ color: electricBlue }}
                         />
                       </td>
-                      <td className="p-4 font-black text-slate-900">{row.employee}</td>
-                      <td className="p-4 text-slate-800">{row.activity}</td>
+                      <td className="p-4 font-black text-slate-900">{row.employee?.name || '—'}</td>
+                      <td className="p-4 text-slate-800">{row.activity?.title || '—'}</td>
                       <td className="p-4 font-mono text-xs">
-                        <a 
-                          href={`#view-proof-${row.id}`} 
-                          onClick={(e) => { e.preventDefault(); alert(`Displaying proof payload file: ${row.proofUrl}`); }} 
+                        <button
+                          onClick={(e) => { e.stopPropagation(); viewProof(row.proofUrl); }}
                           className="underline font-bold"
                           style={{ color: electricBlue }}
                         >
-                          🔗 {row.proofUrl}
-                        </a>
+                          {row.proofUrl ? '🔗 View proof' : '— No proof'}
+                        </button>
                       </td>
-                      <td className="p-4 text-right font-mono text-slate-900 font-bold">+{row.points} XP</td>
+                      <td className="p-4 text-right font-mono text-slate-900 font-bold">+{row.pointsEarned || 0} pts</td>
                       <td className="p-4 text-center">
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border tracking-wide ${
-                          row.status === 'Approved' ? 'bg-green-50 text-green-700 border-green-300' :
-                          row.status === 'Rejected' ? 'bg-red-50 text-red-700 border-red-300' :
-                          'bg-amber-50 text-amber-600 border-amber-300 animate-pulse'
-                        }`}>
-                          {row.status}
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-black border tracking-wide bg-amber-50 text-amber-600 border-amber-300 animate-pulse">
+                          {row.approvalStatus}
                         </span>
                       </td>
                     </tr>
                   ))}
+                  {participations.filter((p) => p.approvalStatus === 'Pending').length === 0 && (
+                    <tr><td colSpan="6" className="p-8 text-center text-slate-400 font-bold">No pending submissions to review.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -253,7 +321,7 @@ export default function SocialDashboard() {
             {/* CONTEXTUAL CONSOLE CONTROL LINE ACTIONS FOOTER */}
             <div className="mt-4 flex items-center justify-between bg-white border border-slate-300 p-4 rounded-xl shadow-sm">
               <span className="text-xs font-bold text-slate-500">
-                {selectedRowId ? `Selected Action Line ID: ${selectedRowId}` : "Select a pending queue item line to action validation"}
+                {selectedRowId ? `Selected a pending submission` : "Select a pending queue item line to action validation"}
               </span>
               <div className="flex space-x-2">
                 <button
@@ -287,32 +355,27 @@ export default function SocialDashboard() {
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
-                  <th className="p-4 w-8"></th>
                   <th className="p-4">Employee Contributor</th>
                   <th className="p-4">Activity Name</th>
-                  <th className="p-4">Uploaded Validation Hash</th>
-                  <th className="p-4 text-right">Gamification Reward</th>
+                  <th className="p-4">Proof</th>
+                  <th className="p-4 text-right">Points Earned</th>
                   <th className="p-4 text-center">Verification Track</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {queue.filter(item => item.employee.toLowerCase().includes(searchTerm.toLowerCase()) || item.activity.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
-                  <tr 
-                    key={row.id} 
-                    className="hover:bg-slate-50 transition-colors cursor-pointer"
-                    style={selectedRowId === row.id ? { backgroundColor: 'rgba(0, 134, 214, 0.08)' } : {}}
-                    onClick={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
-                  >
-                    <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedRowId === row.id} onChange={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)} className="rounded border-slate-400" style={{ color: electricBlue }} />
+                {participations.filter(item => (item.employee?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || (item.activity?.title || '').toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
+                  <tr key={row._id} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4 font-black text-slate-900">{row.employee?.name || '—'}</td>
+                    <td className="p-4 text-slate-800">{row.activity?.title || '—'}</td>
+                    <td className="p-4 font-mono text-xs">
+                      <button onClick={() => viewProof(row.proofUrl)} className="underline font-bold" style={{ color: electricBlue }}>
+                        {row.proofUrl ? '🔗 View' : '— None'}
+                      </button>
                     </td>
-                    <td className="p-4 font-black text-slate-900">{row.employee}</td>
-                    <td className="p-4 text-slate-800">{row.activity}</td>
-                    <td className="p-4 font-mono text-xs underline" style={{ color: electricBlue }}>🔗 {row.proofUrl}</td>
-                    <td className="p-4 text-right font-mono text-slate-950">+{row.points} XP</td>
+                    <td className="p-4 text-right font-mono text-slate-950">+{row.pointsEarned || 0} pts</td>
                     <td className="p-4 text-center">
-                      <span className={`px-2.5 py-0.5 rounded-xl text-xs font-black border ${row.status === 'Approved' ? 'bg-green-50 text-green-700 border-green-300' : row.status === 'Rejected' ? 'bg-red-50 text-red-700 border-rose-300' : 'bg-amber-50 text-amber-600 border-amber-300'}`}>
-                        {row.status}
+                      <span className={`px-2.5 py-0.5 rounded-xl text-xs font-black border ${row.approvalStatus === 'Approved' ? 'bg-green-50 text-green-700 border-green-300' : row.approvalStatus === 'Rejected' ? 'bg-red-50 text-red-700 border-rose-300' : 'bg-amber-50 text-amber-600 border-amber-300'}`}>
+                        {row.approvalStatus}
                       </span>
                     </td>
                   </tr>
@@ -324,66 +387,49 @@ export default function SocialDashboard() {
       )}
 
       {/* ================= VIEW 3: DIVERSITY DASHBOARD ================= */}
+      {/* NOTE: the real DiversityMetric model only tracks a gender headcount
+          breakdown per department+period - no named sub-metrics, no target %,
+          no regional benchmark, no computed health status exist server-side.
+          Those were dropped rather than fabricated. */}
       {activeSubTab === 'Diversity Dashboard' && (
         <BentoGlowEffect glowColor="0, 134, 214" spotlightRadius={260} className="p-1">
           <div className="overflow-x-auto border border-slate-300 rounded-xl bg-white shadow-sm">
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
-                  <th className="p-4 w-8"></th>
-                  <th className="p-4">Demographic Metric Index</th>
-                  <th className="p-4">Operational Department Scope</th>
-                  <th className="p-4 text-right">Current Metric</th>
-                  <th className="p-4 text-right">Target Goal</th>
-                  <th className="p-4 w-44">Parity Progress</th>
-                  <th className="p-4 text-right">Regional Benchmark</th>
-                  <th className="p-4 text-center">Audit Status</th>
+                  <th className="p-4">Department</th>
+                  <th className="p-4">Period</th>
+                  <th className="p-4 text-right">Total Headcount</th>
+                  <th className="p-4 text-right">Female</th>
+                  <th className="p-4 text-right">Male</th>
+                  <th className="p-4 text-right">Other</th>
+                  <th className="p-4 w-44">Female %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {diversityMetrics.filter(div => div.metric.toLowerCase().includes(searchTerm.toLowerCase()) || div.department.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => {
-                  const progressPct = Math.min(Math.round((row.currentPct / row.targetPct) * 100), 100);
-                  return (
-                    <tr 
-                      key={row.id} 
-                      className="hover:bg-slate-50 transition-colors cursor-pointer"
-                      style={selectedRowId === row.id ? { backgroundColor: 'rgba(0, 134, 214, 0.08)' } : {}}
-                      onClick={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
-                    >
-                      <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={selectedRowId === row.id} onChange={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)} className="rounded border-slate-400" style={{ color: electricBlue }} />
-                      </td>
-                      <td className="p-4 font-black text-slate-900">{row.metric}</td>
-                      <td className="p-4 text-slate-800 text-xs font-bold">{row.department}</td>
-                      <td className="p-4 text-right font-mono text-slate-950">{row.currentPct}%</td>
-                      <td className="p-4 text-right font-mono text-slate-500">{row.targetPct}%</td>
-                      <td className="p-4">
-                        <div className="flex items-center space-x-2">
-                          <div className="w-full bg-slate-200 rounded-full h-2 border border-slate-300/60">
-                            <div 
-                              className="h-1.5 rounded-full transition-all duration-500"
-                              style={{ 
-                                width: `${progressPct}%`, 
-                                backgroundColor: row.healthStatus === 'Needs Attention' ? '#f59e0b' : electricBlue 
-                              }}
-                            ></div>
-                          </div>
-                          <span className="text-[10px] font-mono font-bold text-slate-700">{progressPct}%</span>
+                {diversityMetrics
+                  .filter(row => (row.department?.name || '').toLowerCase().includes(searchTerm.toLowerCase()))
+                  .map((row) => (
+                  <tr key={row._id} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4 font-black text-slate-900">{row.department?.name || '—'}</td>
+                    <td className="p-4 text-slate-700 font-mono text-xs">{row.period}</td>
+                    <td className="p-4 text-right font-mono text-slate-950">{row.headcountTotal}</td>
+                    <td className="p-4 text-right font-mono text-slate-700">{row.headcountFemale}</td>
+                    <td className="p-4 text-right font-mono text-slate-700">{row.headcountMale}</td>
+                    <td className="p-4 text-right font-mono text-slate-700">{row.headcountOther}</td>
+                    <td className="p-4">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-full bg-slate-200 rounded-full h-2 border border-slate-300/60">
+                          <div className="h-1.5 rounded-full transition-all duration-500" style={{ width: `${row.femalePercentage}%`, backgroundColor: electricBlue }}></div>
                         </div>
-                      </td>
-                      <td className="p-4 text-right font-mono text-slate-600">{row.regionalBench}</td>
-                      <td className="p-4 text-center">
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${
-                          row.healthStatus === 'Target Met' ? 'bg-green-50 text-green-700 border-green-300' :
-                          row.healthStatus === 'On Track' ? 'bg-blue-50 text-blue-700 border-blue-300' :
-                          'bg-amber-50 text-amber-700 border-amber-300 animate-pulse'
-                        }`}>
-                          {row.healthStatus}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        <span className="text-[10px] font-mono font-bold text-slate-700">{row.femalePercentage}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {diversityMetrics.length === 0 && (
+                  <tr><td colSpan="7" className="p-8 text-center text-slate-400 font-bold">No diversity metrics logged yet.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -395,6 +441,51 @@ export default function SocialDashboard() {
         <span className="mr-2 font-black text-sm select-none" style={{ color: electricBlue }}>ℹ</span>
         <span>Corporate Social Responsibility (CSR) impact statements are audit-logged for annual ESG disclosure reporting.</span>
       </div>
+
+      {/* --- BACKEND CONNECTION: create modal (CSR Activities / Diversity) --- */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsModalOpen(false)}>
+          <form onClick={(e) => e.stopPropagation()} onSubmit={handleSave} className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-black text-slate-900">New {activeSubTab === 'Diversity Dashboard' ? 'Diversity Metric Entry' : 'CSR Activity'}</h3>
+
+            {activeSubTab === 'CSR Activities' && (
+              <>
+                <input required placeholder="Activity Title" value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select required value={formData.category || ''} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select category...</option>
+                  {csrCategories.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+                </select>
+                <textarea placeholder="Description" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required type="date" value={formData.date || ''} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input placeholder="Location" value={formData.location || ''} onChange={(e) => setFormData({ ...formData, location: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input type="number" placeholder="Expected Participants" value={formData.expectedParticipants} onChange={(e) => setFormData({ ...formData, expectedParticipants: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+              </>
+            )}
+
+            {activeSubTab === 'Diversity Dashboard' && (
+              <>
+                <select required value={formData.department || ''} onChange={(e) => setFormData({ ...formData, department: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select department...</option>
+                  {departments.map((d) => <option key={d._id} value={d._id}>{d.name}</option>)}
+                </select>
+                <input required placeholder="Period (e.g. 2026-07)" value={formData.period || ''} onChange={(e) => setFormData({ ...formData, period: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required type="number" placeholder="Total Headcount" value={formData.headcountTotal} onChange={(e) => setFormData({ ...formData, headcountTotal: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input type="number" placeholder="Female Headcount" value={formData.headcountFemale} onChange={(e) => setFormData({ ...formData, headcountFemale: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input type="number" placeholder="Male Headcount" value={formData.headcountMale} onChange={(e) => setFormData({ ...formData, headcountMale: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input type="number" placeholder="Other Headcount" value={formData.headcountOther} onChange={(e) => setFormData({ ...formData, headcountOther: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-500">Submitting again for the same department + period updates that entry rather than duplicating it.</p>
+              </>
+            )}
+
+            <div className="flex gap-2 justify-end pt-2">
+              <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 rounded font-bold text-sm border border-slate-300 text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={saving} className="px-4 py-2 rounded font-bold text-sm text-white disabled:opacity-50" style={{ backgroundColor: electricBlue }}>
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

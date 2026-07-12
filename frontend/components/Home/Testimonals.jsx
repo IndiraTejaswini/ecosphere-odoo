@@ -1,3 +1,5 @@
+
+
 import React from "react";
 import TextType from './TextType'; // Import the typing animation
 
@@ -61,7 +63,7 @@ const Testimonals = () => {
     );
 
     return (
-        <section className="py-20 bg-slate-50 overflow-hidden">
+        <section id="testimonials" className="py-20 bg-slate-50 overflow-hidden">
             <style>{`
             @keyframes marqueeScroll {
                 0% { transform: translateX(0%); }

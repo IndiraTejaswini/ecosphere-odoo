@@ -1,35 +1,81 @@
-import  { useState } from 'react';
+import { useState, useEffect } from 'react';
 import BentoGlowEffect from '../components/BentoGlowEffect';
 
-// --- MOCK TRANS-DATA & MASTER PROFILES FROM PLATFORM BUSINESS METRICS ---
-const INITIAL_EMISSION_FACTORS = [
-  { id: 1, category: "Electricity (Grid)", scope: "Scope 2", factor: "0.85", unit: "kg CO₂e/kWh", source: "EPA 2026", status: "Active" },
-  { id: 2, category: "Diesel Fuel (Fleet)", scope: "Scope 1", factor: "2.68", unit: "kg CO₂e/liter", source: "DEFRA", status: "Active" },
-  { id: 3, category: "Natural Gas (Heating)", scope: "Scope 1", factor: "1.91", unit: "kg CO₂e/m³", source: "IPCC", status: "Active" },
-];
+// --- BACKEND CONNECTION ---
+import api from '../api';
 
-const INITIAL_PRODUCT_PROFILES = [
-  { id: 1, sku: "ECO-BOX-01", name: "Recycled Kraft Packaging", material: "Corrugated Cardboard", footprint: "0.24", unit: "kg CO₂e/unit", rating: "A+" },
-  { id: 2, sku: "SLM-PLAS-44", name: "Polyethylene Stretch Wrap", material: "Virgin LDPE", footprint: "1.85", unit: "kg CO₂e/kg", rating: "C-" },
-  { id: 3, sku: "BIO-TAPE-09", name: "Water-Activated Paper Tape", material: "Kraft Paper / Starch", footprint: "0.12", unit: "kg CO₂e/roll", rating: "A" },
-];
+const NEW_ENTRY_LABELS = {
+  'Emission Factors': 'Emission Factor',
+  'Product ESG Profiles': 'Product Profile',
+  'Carbon Transactions': 'Transaction',
+  'Environmental Goals': 'Goal',
+};
 
-const INITIAL_TRANSACTIONS = [
-  { id: 1, date: "2026-07-10", sourceRecord: "PO-99482 (Logistics Fleet)", type: "Fleet Diesel Fuel", usage: "1,200 L", calculatedEmissions: "3.21 t", status: "Auto-Calculated" },
-  { id: 2, date: "2026-07-08", sourceRecord: "MFG-BATCH-808", type: "Facility Electricity", usage: "45,000 kWh", calculatedEmissions: "38.25 t", status: "Auto-Calculated" },
-  { id: 3, date: "2026-07-05", sourceRecord: "EXP-MARCH-VEND", type: "Procurement Cargo Run", usage: "450 L", calculatedEmissions: "1.20 t", status: "Auto-Calculated" },
-];
+// Carbon Transactions are an immutable hash-chained ledger by design (see
+// backend's CarbonTransaction model) - no edit/delete endpoint exists for
+// them on purpose. Everything else supports normal edit/soft-delete.
+const READONLY_TABS = ['Carbon Transactions'];
 
-const INITIAL_GOALS = [
-  { id: 1, name: "Reduce Fleet Emissions", department: "Logistics", targetCo2: 500, currentCo2: 390, deadline: "2026-12-31", status: "Active" },
-  { id: 2, name: "Cut Packaging Waste", department: "Manufacturing", targetCo2: 120, currentCo2: 98, deadline: "2026-09-30", status: "On Track" },
-  { id: 3, name: "Office Energy Cut", department: "Corporate", targetCo2: 80, currentCo2: 80, deadline: "2026-06-30", status: "Completed" }
-];
+function formatDate(isoString) {
+  if (!isoString) return '—';
+  return new Date(isoString).toISOString().slice(0, 10);
+}
+
+// Backend stores a numeric esgScore (0-100), not a letter rating - derived here.
+function scoreToRating(score) {
+  if (score >= 90) return 'A+';
+  if (score >= 80) return 'A';
+  if (score >= 70) return 'B';
+  if (score >= 60) return 'C';
+  return 'D';
+}
 
 export default function EnvironmentalDashboard() {
   const [activeSubTab, setActiveSubTab] = useState('Environmental Goals');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRowId, setSelectedRowId] = useState(null);
+
+  // --- BACKEND CONNECTION: real data instead of the mock arrays ---
+  const [emissionFactors, setEmissionFactors] = useState([]);
+  const [productProfiles, setProductProfiles] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [goals, setGoals] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState('create'); // 'create' | 'edit'
+  const [formData, setFormData] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  async function loadAllData() {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const [efRes, ppRes, ctRes, egRes, deptRes] = await Promise.all([
+        api.emissionFactors.list({ limit: 100 }),
+        api.productEsgProfiles.list({ limit: 100 }),
+        api.carbonTransactions.list({ limit: 100 }),
+        api.environmentalGoals.list({ limit: 100 }),
+        api.departments.list({ limit: 100 }),
+      ]);
+      setEmissionFactors(efRes.data);
+      setProductProfiles(ppRes.data);
+      setTransactions(ctRes.data);
+      setGoals(egRes.data);
+      setDepartments(deptRes.data);
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load environmental data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAllData();
+  }, []);
+  // --- END initial load ---
 
   // Clear tracking references whenever changing view scopes to avoid conflict cross-contamination
   const handleTabChange = (tabName) => {
@@ -38,7 +84,100 @@ export default function EnvironmentalDashboard() {
     setSelectedRowId(null);
   };
 
-  // --- DYNAMIC SWITCH RENDER LAYOUT CONDITIONAL BLOCKS ---
+  // --- BACKEND CONNECTION: create/edit modal handling ---
+  function openCreateModal() {
+    const defaults = {
+      'Emission Factors': { name: '', activityType: '', unit: '', factorValue: '', source: '' },
+      'Product ESG Profiles': { productName: '', sku: '', carbonFootprint: '', esgScore: '', notes: '' },
+      'Carbon Transactions': { department: '', emissionFactor: '', source: 'Manual', quantity: '' },
+      'Environmental Goals': { title: '', description: '', department: '', targetCO2: '', currentCO2: 0, deadline: '', status: 'Active' },
+    };
+    setFormData(defaults[activeSubTab] || {});
+    setModalMode('create');
+    setIsModalOpen(true);
+  }
+
+  function openEditModal() {
+    if (!selectedRowId || READONLY_TABS.includes(activeSubTab)) return;
+
+    if (activeSubTab === 'Emission Factors') {
+      const ef = emissionFactors.find((x) => x._id === selectedRowId);
+      setFormData({ name: ef.name, activityType: ef.activityType, unit: ef.unit, factorValue: ef.factorValue, source: ef.source || '' });
+    } else if (activeSubTab === 'Product ESG Profiles') {
+      const pp = productProfiles.find((x) => x._id === selectedRowId);
+      setFormData({ productName: pp.productName, sku: pp.sku, carbonFootprint: pp.carbonFootprint, esgScore: pp.esgScore, notes: pp.notes || '' });
+    } else if (activeSubTab === 'Environmental Goals') {
+      const g = goals.find((x) => x._id === selectedRowId);
+      setFormData({
+        title: g.title,
+        description: g.description || '',
+        department: g.department?._id || g.department,
+        targetCO2: g.targetCO2,
+        currentCO2: g.currentCO2,
+        deadline: formatDate(g.deadline),
+        status: g.status,
+      });
+    }
+    setModalMode('edit');
+    setIsModalOpen(true);
+  }
+
+  async function handleSave(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (activeSubTab === 'Emission Factors') {
+        const body = { ...formData, factorValue: Number(formData.factorValue) };
+        if (modalMode === 'create') await api.emissionFactors.create(body);
+        else await api.emissionFactors.update(selectedRowId, body);
+      } else if (activeSubTab === 'Product ESG Profiles') {
+        const body = { ...formData, carbonFootprint: Number(formData.carbonFootprint), esgScore: Number(formData.esgScore) };
+        if (modalMode === 'create') await api.productEsgProfiles.create(body);
+        else await api.productEsgProfiles.update(selectedRowId, body);
+      } else if (activeSubTab === 'Carbon Transactions') {
+        // Create only - quantity/department/emissionFactor/source; backend
+        // computes calculatedCO2e, anomaly flag, and hash-chain link itself.
+        await api.carbonTransactions.create({ ...formData, quantity: Number(formData.quantity) });
+      } else if (activeSubTab === 'Environmental Goals') {
+        const body = { ...formData, targetCO2: Number(formData.targetCO2), currentCO2: Number(formData.currentCO2) };
+        if (modalMode === 'create') await api.environmentalGoals.create(body);
+        else await api.environmentalGoals.update(selectedRowId, body);
+      }
+      setIsModalOpen(false);
+      setSelectedRowId(null);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!selectedRowId || READONLY_TABS.includes(activeSubTab)) return;
+    if (!window.confirm('Soft-delete this record? (It can be restored later - nothing is permanently destroyed.)')) return;
+
+    try {
+      if (activeSubTab === 'Emission Factors') await api.emissionFactors.remove(selectedRowId);
+      else if (activeSubTab === 'Product ESG Profiles') await api.productEsgProfiles.remove(selectedRowId);
+      else if (activeSubTab === 'Environmental Goals') await api.environmentalGoals.remove(selectedRowId);
+      setSelectedRowId(null);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Delete failed');
+    }
+  }
+
+  async function handleReview(txId, decision) {
+    try {
+      await api.carbonTransactions.review(txId, decision);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Review action failed');
+    }
+  }
+  // --- END create/edit/delete/review handling ---
+
   return (
     <div className="p-6 min-h-screen bg-slate-50 text-slate-900">
       
@@ -59,6 +198,13 @@ export default function EnvironmentalDashboard() {
         ))}
       </div>
 
+      {/* --- BACKEND CONNECTION: load error banner --- */}
+      {loadError && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold rounded-2xl px-6 py-4 mb-6">
+          ⚠️ {loadError}
+        </div>
+      )}
+
       {/* 2. DYNAMIC BENTO CONTENT CANVAS WRAPPER */}
       <BentoGlowEffect glowColor="34, 197, 94" spotlightRadius={260} className="p-2">
         
@@ -66,37 +212,36 @@ export default function EnvironmentalDashboard() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <div className="flex items-center flex-wrap gap-2">
             <button 
-              onClick={() => alert(`+ New item entry configuration workflow for: ${activeSubTab}`)}
+              onClick={openCreateModal}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded font-bold text-sm shadow-sm transition-all"
             >
-              + New {activeSubTab.replace('Environmental ', '').replace('s', '')}
+              + New {NEW_ENTRY_LABELS[activeSubTab]}
             </button>
             <button 
-              disabled={!selectedRowId}
-              onClick={() => alert(`Modify Entry Target Frame ID: ${selectedRowId}`)}
+              disabled={!selectedRowId || READONLY_TABS.includes(activeSubTab)}
+              onClick={openEditModal}
+              title={READONLY_TABS.includes(activeSubTab) ? 'Carbon Transactions are an immutable ledger - use Confirm/Reject on flagged rows instead' : ''}
               className={`px-4 py-2 rounded font-bold text-sm transition-all border ${
-                selectedRowId ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                selectedRowId && !READONLY_TABS.includes(activeSubTab) ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
               }`}
             >
               Edit
             </button>
             <button 
-              disabled={!selectedRowId}
-              onClick={() => {
-                alert(`Purging targeted record entry structural node ID: ${selectedRowId}`);
-                setSelectedRowId(null);
-              }}
+              disabled={!selectedRowId || READONLY_TABS.includes(activeSubTab)}
+              onClick={handleDelete}
+              title={READONLY_TABS.includes(activeSubTab) ? 'Carbon Transactions cannot be deleted - immutable ledger' : ''}
               className={`px-4 py-2 rounded font-bold text-sm transition-all border ${
-                selectedRowId ? 'bg-red-600 hover:bg-red-700 text-white border-red-700 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                selectedRowId && !READONLY_TABS.includes(activeSubTab) ? 'bg-red-600 hover:bg-red-700 text-white border-red-700 shadow-sm' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
               }`}
             >
               Delete
             </button>
             <button 
-              onClick={() => alert(`Exporting current dataset matrix summary via CSV payload dump`)}
+              onClick={() => api.reports.exportCsv({ module: 'environmental' }).catch((err) => alert(err.message))}
               className="bg-white hover:bg-slate-50 text-slate-900 px-4 py-2 rounded font-bold text-sm border border-slate-300 transition-all shadow-sm"
             >
-              Export ▾
+              Export CSV
             </button>
           </div>
 
@@ -113,15 +258,19 @@ export default function EnvironmentalDashboard() {
 
         {/* 3. DYNAMIC METRIC VIEW DATA VIEWS SPLIT */}
         <div className="overflow-x-auto border border-slate-300 rounded-xl bg-white shadow-sm">
-          
+
+          {loading && (
+            <div className="p-12 text-center text-slate-400 font-bold text-sm">Loading {activeSubTab.toLowerCase()}...</div>
+          )}
+
           {/* ================= VIEW: EMISSION FACTORS ================= */}
-          {activeSubTab === 'Emission Factors' && (
+          {!loading && activeSubTab === 'Emission Factors' && (
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
                   <th className="p-4 w-8"></th>
                   <th className="p-4">GHG Source Category</th>
-                  <th className="p-4">Scope Level</th>
+                  <th className="p-4">Activity Type</th>
                   <th className="p-4 text-right">Calculation Factor</th>
                   <th className="p-4">Metric Formula Unit</th>
                   <th className="p-4">Regulatory Source Authority</th>
@@ -129,17 +278,17 @@ export default function EnvironmentalDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {INITIAL_EMISSION_FACTORS.filter(ef => ef.category.toLowerCase().includes(searchTerm.toLowerCase())).map((ef) => (
-                  <tr key={ef.id} className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedRowId === ef.id ? 'bg-emerald-50/70' : ''}`} onClick={() => setSelectedRowId(ef.id === selectedRowId ? null : ef.id)}>
+                {emissionFactors.filter(ef => ef.name.toLowerCase().includes(searchTerm.toLowerCase())).map((ef) => (
+                  <tr key={ef._id} className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedRowId === ef._id ? 'bg-emerald-50/70' : ''}`} onClick={() => setSelectedRowId(ef._id === selectedRowId ? null : ef._id)}>
                     <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedRowId === ef.id} onChange={() => setSelectedRowId(ef.id === selectedRowId ? null : ef.id)} className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500" />
+                      <input type="checkbox" checked={selectedRowId === ef._id} onChange={() => setSelectedRowId(ef._id === selectedRowId ? null : ef._id)} className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500" />
                     </td>
-                    <td className="p-4 font-black">{ef.category}</td>
-                    <td className="p-4"><span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded">{ef.scope}</span></td>
-                    <td className="p-4 text-right font-mono text-emerald-700">{ef.factor}</td>
+                    <td className="p-4 font-black">{ef.name}</td>
+                    <td className="p-4"><span className="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-700 text-xs rounded">{ef.activityType}</span></td>
+                    <td className="p-4 text-right font-mono text-emerald-700">{ef.factorValue}</td>
                     <td className="p-4 font-mono text-slate-600 text-xs">{ef.unit}</td>
-                    <td className="p-4 text-slate-700">{ef.source}</td>
-                    <td className="p-4 text-center"><span className="text-xs bg-green-50 text-green-700 border border-green-300 font-bold px-2 py-0.5 rounded-full">{ef.status}</span></td>
+                    <td className="p-4 text-slate-700">{ef.source || '—'}</td>
+                    <td className="p-4 text-center"><span className="text-xs bg-green-50 text-green-700 border border-green-300 font-bold px-2 py-0.5 rounded-full">{ef.isActive === false ? 'Inactive' : 'Active'}</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -147,32 +296,30 @@ export default function EnvironmentalDashboard() {
           )}
 
           {/* ================= VIEW: PRODUCT ESG PROFILES ================= */}
-          {activeSubTab === 'Product ESG Profiles' && (
+          {!loading && activeSubTab === 'Product ESG Profiles' && (
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
                   <th className="p-4 w-8"></th>
                   <th className="p-4">Product SKU</th>
                   <th className="p-4">Eco-Profile Name</th>
-                  <th className="p-4">Primary Component Material</th>
                   <th className="p-4 text-right">Lifecycle Carbon Footprint</th>
-                  <th className="p-4">Unit Scope</th>
+                  <th className="p-4 text-right">ESG Score</th>
                   <th className="p-4 text-center">Eco-Rating Tier</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {INITIAL_PRODUCT_PROFILES.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase())).map((p) => (
-                  <tr key={p.id} className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedRowId === p.id ? 'bg-emerald-50/70' : ''}`} onClick={() => setSelectedRowId(p.id === selectedRowId ? null : p.id)}>
+                {productProfiles.filter(p => p.productName.toLowerCase().includes(searchTerm.toLowerCase())).map((p) => (
+                  <tr key={p._id} className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedRowId === p._id ? 'bg-emerald-50/70' : ''}`} onClick={() => setSelectedRowId(p._id === selectedRowId ? null : p._id)}>
                     <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedRowId === p.id} onChange={() => setSelectedRowId(p.id === selectedRowId ? null : p.id)} className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500" />
+                      <input type="checkbox" checked={selectedRowId === p._id} onChange={() => setSelectedRowId(p._id === selectedRowId ? null : p._id)} className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500" />
                     </td>
                     <td className="p-4 font-mono text-slate-600 text-xs">{p.sku}</td>
-                    <td className="p-4 font-black">{p.name}</td>
-                    <td className="p-4 text-slate-700">{p.material}</td>
-                    <td className="p-4 text-right font-mono text-red-600">{p.footprint}</td>
-                    <td className="p-4 font-mono text-slate-500 text-xs">{p.unit}</td>
+                    <td className="p-4 font-black">{p.productName}</td>
+                    <td className="p-4 text-right font-mono text-red-600">{p.carbonFootprint} kg CO₂e</td>
+                    <td className="p-4 text-right font-mono text-slate-700">{p.esgScore}/100</td>
                     <td className="p-4 text-center">
-                      <span className={`px-2.5 py-0.5 rounded text-xs font-black border ${p.rating.startsWith('A') ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300'}`}>{p.rating}</span>
+                      <span className={`px-2.5 py-0.5 rounded text-xs font-black border ${p.esgScore >= 80 ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-rose-50 text-rose-700 border-rose-300'}`}>{scoreToRating(p.esgScore)}</span>
                     </td>
                   </tr>
                 ))}
@@ -181,31 +328,48 @@ export default function EnvironmentalDashboard() {
           )}
 
           {/* ================= VIEW: CARBON TRANSACTIONS ================= */}
-          {activeSubTab === 'Carbon Transactions' && (
+          {!loading && activeSubTab === 'Carbon Transactions' && (
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
-                  <th className="p-4 w-8"></th>
                   <th className="p-4">Transaction Date</th>
-                  <th className="p-4">Linked ERP Source Record Origin</th>
-                  <th className="p-4">Activity Category Scope</th>
-                  <th className="p-4 text-right">Operational Log Usage</th>
-                  <th className="p-4 text-right">Calculated Emissions Output</th>
-                  <th className="p-4 text-center">Integration Ledger Pipe Status</th>
+                  <th className="p-4">Department / Source</th>
+                  <th className="p-4">Emission Factor</th>
+                  <th className="p-4 text-right">Quantity</th>
+                  <th className="p-4 text-right">Calculated Emissions</th>
+                  <th className="p-4 text-center">Ledger Status</th>
+                  <th className="p-4 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {INITIAL_TRANSACTIONS.filter(t => t.sourceRecord.toLowerCase().includes(searchTerm.toLowerCase())).map((t) => (
-                  <tr key={t.id} className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedRowId === t.id ? 'bg-emerald-50/70' : ''}`} onClick={() => setSelectedRowId(t.id === selectedRowId ? null : t.id)}>
-                    <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedRowId === t.id} onChange={() => setSelectedRowId(t.id === selectedRowId ? null : t.id)} className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500" />
+                {transactions
+                  .filter(t => (t.department?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || t.source.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .map((t) => (
+                  <tr key={t._id} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4 font-mono text-slate-500 text-xs">{formatDate(t.timestamp)}</td>
+                    <td className="p-4 font-bold text-slate-900">{t.department?.name || '—'} <span className="font-normal text-slate-500">· {t.source}</span></td>
+                    <td className="p-4 text-slate-700">{t.emissionFactor?.name || '—'}</td>
+                    <td className="p-4 text-right font-mono">{t.quantity} {t.emissionFactor?.unit || ''}</td>
+                    <td className="p-4 text-right font-mono text-red-600 font-bold">{t.calculatedCO2e?.toFixed(2)} kg</td>
+                    <td className="p-4 text-center">
+                      <span className={`text-xs border font-bold px-3 py-0.5 rounded-full shadow-sm ${
+                        t.status === 'Confirmed' ? 'bg-emerald-50 text-emerald-700 border-emerald-300' :
+                        t.status === 'Flagged' ? 'bg-amber-50 text-amber-700 border-amber-300' :
+                        'bg-slate-50 text-slate-500 border-slate-300'
+                      }`}>
+                        {t.anomalyFlag ? '🚨 ' : '⚙️ '}{t.status}
+                      </span>
                     </td>
-                    <td className="p-4 font-mono text-slate-500 text-xs">{t.date}</td>
-                    <td className="p-4 font-bold text-slate-900">{t.sourceRecord}</td>
-                    <td className="p-4 text-slate-700">{t.type}</td>
-                    <td className="p-4 text-right font-mono">{t.usage}</td>
-                    <td className="p-4 text-right font-mono text-red-600 font-bold">{t.calculatedEmissions}</td>
-                    <td className="p-4 text-center"><span className="text-xs bg-sky-50 text-sky-700 border border-sky-300 font-bold px-3 py-0.5 rounded-full shadow-sm">⚙️ {t.status}</span></td>
+                    <td className="p-4 text-center">
+                      {t.status === 'Flagged' ? (
+                        <div className="flex gap-1 justify-center">
+                          <button onClick={() => handleReview(t._id, 'Confirmed')} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1 rounded font-bold">Confirm</button>
+                          <button onClick={() => handleReview(t._id, 'Rejected')} className="text-xs bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded font-bold">Reject</button>
+                        </div>
+                      ) : (
+                        <span className="text-slate-300 text-xs">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -213,7 +377,7 @@ export default function EnvironmentalDashboard() {
           )}
 
           {/* ================= VIEW: ENVIRONMENTAL GOALS ================= */}
-          {activeSubTab === 'Environmental Goals' && (
+          {!loading && activeSubTab === 'Environmental Goals' && (
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
@@ -228,17 +392,17 @@ export default function EnvironmentalDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {INITIAL_GOALS.filter(g => g.name.toLowerCase().includes(searchTerm.toLowerCase())).map((goal) => {
-                  const progressPercentage = Math.min(Math.round((goal.currentCo2 / goal.targetCo2) * 100), 100);
+                {goals.filter(g => g.title.toLowerCase().includes(searchTerm.toLowerCase())).map((goal) => {
+                  const progressPercentage = Math.min(Math.round((goal.currentCO2 / goal.targetCO2) * 100), 100);
                   return (
-                    <tr key={goal.id} className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedRowId === goal.id ? 'bg-emerald-50/70' : ''}`} onClick={() => setSelectedRowId(goal.id === selectedRowId ? null : goal.id)}>
+                    <tr key={goal._id} className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedRowId === goal._id ? 'bg-emerald-50/70' : ''}`} onClick={() => setSelectedRowId(goal._id === selectedRowId ? null : goal._id)}>
                       <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={selectedRowId === goal.id} onChange={() => setSelectedRowId(goal.id === selectedRowId ? null : goal.id)} className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500" />
+                        <input type="checkbox" checked={selectedRowId === goal._id} onChange={() => setSelectedRowId(goal._id === selectedRowId ? null : goal._id)} className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500" />
                       </td>
-                      <td className="p-4 font-black text-slate-900">{goal.name}</td>
-                      <td className="p-4 text-slate-800">{goal.department}</td>
-                      <td className="p-4 text-right font-mono text-slate-900">{goal.targetCo2} t</td>
-                      <td className="p-4 text-right font-mono text-emerald-700">{goal.currentCo2} t</td>
+                      <td className="p-4 font-black text-slate-900">{goal.title}</td>
+                      <td className="p-4 text-slate-800">{goal.department?.name || '—'}</td>
+                      <td className="p-4 text-right font-mono text-slate-900">{goal.targetCO2} kg</td>
+                      <td className="p-4 text-right font-mono text-emerald-700">{goal.currentCO2} kg</td>
                       <td className="p-4">
                         <div className="flex items-center space-x-2">
                           <div className="w-full bg-slate-200 rounded-full h-2.5 border border-slate-300/60">
@@ -247,11 +411,12 @@ export default function EnvironmentalDashboard() {
                           <span className="text-xs font-mono text-slate-700 font-bold">{progressPercentage}%</span>
                         </div>
                       </td>
-                      <td className="p-4 text-slate-700 font-mono">{goal.deadline}</td>
+                      <td className="p-4 text-slate-700 font-mono">{formatDate(goal.deadline)}</td>
                       <td className="p-4 text-center">
                         <span className={`border px-3 py-1 rounded-full text-xs font-bold ${
                           goal.status === 'Active' ? 'border-emerald-500 text-emerald-700 bg-emerald-50' :
                           goal.status === 'On Track' ? 'border-2 border-emerald-600 text-emerald-800 bg-emerald-100 shadow-sm' :
+                          goal.status === 'At Risk' ? 'border border-red-500 text-red-700 bg-red-50' :
                           'border border-sky-500 text-sky-700 bg-sky-50'
                         }`}>{goal.status}</span>
                       </td>
@@ -267,10 +432,84 @@ export default function EnvironmentalDashboard() {
         {/* 4. COMPLIANCE AUTOMATED LEDGER FOOTER TRACE NOTE */}
         <div className="mt-6 pt-4 border-t border-slate-200 flex items-center text-xs text-slate-800 font-bold italic bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
           <span className="text-emerald-600 mr-2 font-black text-sm select-none">ℹ</span>
-          <span>Carbon Transactions auto-generated from Purchase/Manufacturing/Fleet/Expenses</span>
+          <span>Carbon Transactions are cryptographically hash-chained and immutable once created</span>
         </div>
 
       </BentoGlowEffect>
+
+      {/* --- BACKEND CONNECTION: create/edit modal --- */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsModalOpen(false)}>
+          <form onClick={(e) => e.stopPropagation()} onSubmit={handleSave} className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-black text-slate-900">
+              {modalMode === 'create' ? 'New' : 'Edit'} {NEW_ENTRY_LABELS[activeSubTab]}
+            </h3>
+
+            {activeSubTab === 'Emission Factors' && (
+              <>
+                <input required placeholder="Name (e.g. Grid Electricity)" value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required placeholder="Activity Type (e.g. Electricity, Fleet)" value={formData.activityType || ''} onChange={(e) => setFormData({ ...formData, activityType: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required placeholder="Unit (e.g. kWh, litre)" value={formData.unit || ''} onChange={(e) => setFormData({ ...formData, unit: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required type="number" step="any" placeholder="Factor Value (kg CO2e per unit)" value={formData.factorValue} onChange={(e) => setFormData({ ...formData, factorValue: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input placeholder="Source (e.g. EPA 2026)" value={formData.source || ''} onChange={(e) => setFormData({ ...formData, source: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+              </>
+            )}
+
+            {activeSubTab === 'Product ESG Profiles' && (
+              <>
+                <input required placeholder="Product Name" value={formData.productName || ''} onChange={(e) => setFormData({ ...formData, productName: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required placeholder="SKU" value={formData.sku || ''} onChange={(e) => setFormData({ ...formData, sku: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required type="number" step="any" placeholder="Carbon Footprint (kg CO2e)" value={formData.carbonFootprint} onChange={(e) => setFormData({ ...formData, carbonFootprint: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required type="number" min="0" max="100" placeholder="ESG Score (0-100)" value={formData.esgScore} onChange={(e) => setFormData({ ...formData, esgScore: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <textarea placeholder="Notes" value={formData.notes || ''} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+              </>
+            )}
+
+            {activeSubTab === 'Carbon Transactions' && (
+              <>
+                <select required value={formData.department || ''} onChange={(e) => setFormData({ ...formData, department: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select department...</option>
+                  {departments.map((d) => <option key={d._id} value={d._id}>{d.name}</option>)}
+                </select>
+                <select required value={formData.emissionFactor || ''} onChange={(e) => setFormData({ ...formData, emissionFactor: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select emission factor...</option>
+                  {emissionFactors.map((ef) => <option key={ef._id} value={ef._id}>{ef.name} ({ef.unit})</option>)}
+                </select>
+                <select required value={formData.source || 'Manual'} onChange={(e) => setFormData({ ...formData, source: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  {['Purchase', 'Manufacturing', 'Expense', 'Fleet', 'Manual'].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <input required type="number" step="any" placeholder="Quantity" value={formData.quantity} onChange={(e) => setFormData({ ...formData, quantity: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-500">CO₂e is calculated automatically from quantity × the emission factor's value, and checked for anomalies before confirming.</p>
+              </>
+            )}
+
+            {activeSubTab === 'Environmental Goals' && (
+              <>
+                <input required placeholder="Goal Title" value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <textarea placeholder="Description" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select required value={formData.department || ''} onChange={(e) => setFormData({ ...formData, department: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select department...</option>
+                  {departments.map((d) => <option key={d._id} value={d._id}>{d.name}</option>)}
+                </select>
+                <input required type="number" step="any" placeholder="Target CO2 (kg)" value={formData.targetCO2} onChange={(e) => setFormData({ ...formData, targetCO2: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input type="number" step="any" placeholder="Current CO2 (kg)" value={formData.currentCO2} onChange={(e) => setFormData({ ...formData, currentCO2: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-500">Note: currentCO2 also auto-increments as new Confirmed Carbon Transactions come in for this department - manual edits may be overtaken by that.</p>
+                <input required type="date" value={formData.deadline || ''} onChange={(e) => setFormData({ ...formData, deadline: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select value={formData.status || 'Active'} onChange={(e) => setFormData({ ...formData, status: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  {['Active', 'On Track', 'At Risk', 'Completed'].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </>
+            )}
+
+            <div className="flex gap-2 justify-end pt-2">
+              <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 rounded font-bold text-sm border border-slate-300 text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={saving} className="px-4 py-2 rounded font-bold text-sm bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50">
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

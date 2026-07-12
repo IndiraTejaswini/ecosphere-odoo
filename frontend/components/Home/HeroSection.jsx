@@ -1,26 +1,39 @@
 import { useRef, useEffect, useState } from "react";
-
-// Import the image from your assets folder
 import heroBg from '../../src/assets/hero.png';
-
-// Import your SplitText component (Adjust path if needed)
 import SplitText from './SplitText';
 
+// --- BACKEND CONNECTION ---
+import api from '../../api';
+
 /**
- * Hero section with an organic cursor-reveal effect.
- * A light-blue-to-white cover sits over the background photo; moving the
- * cursor cuts a soft, uneven blob-shaped hole in the cover (CSS clip-path,
- * evenodd rule), revealing the real image underneath. The blob keeps
- * wobbling gently even when the cursor is still, and shrinks away to
- * nothing when the cursor leaves.
+ * NOTE ON WHAT CHANGED HERE:
+ * - Removed the "Sign up" tab, the Role selector, and the Google/GitHub
+ *   buttons. None of these have a real backend behind them:
+ *     - There is no public self-registration endpoint - employees are
+ *       created by an Admin (POST /api/employees, admin-only) or the seed
+ *       script, never by a visitor filling out a form.
+ *     - Letting a public form pick "Admin" as its own role would be a
+ *       serious security hole even if a signup endpoint did exist.
+ *     - Google/GitHub had no OAuth client wired up anywhere - clicking them
+ *       would do nothing.
+ *   If you want a real "request access" flow later, that's a different
+ *   feature (e.g. a form that emails/notifies an Admin to create the
+ *   account) - not a self-service signup form.
+ * - Login now goes through api.auth.login() instead of a raw fetch with a
+ *   hardcoded URL and a different localStorage key - this was the critical
+ *   fix, since the mismatched key would've silently broken every other
+ *   page's API calls even though login itself appeared to succeed.
  */
-export default function HeroSection() {
+export default function HeroSection({ onAuthSuccess }) {
   const heroRef = useRef(null);
   const coverRef = useRef(null);
   const target = useRef({ x: 0, y: 0, active: false });
   const current = useRef({ x: 0, y: 0, radius: 0 });
   const tRef = useRef(0);
-  const [isSignup, setIsSignup] = useState(false);
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const blobPath = (cx, cy, baseR, t, points = 22) => {
     const step = (Math.PI * 2) / points;
@@ -88,23 +101,36 @@ export default function HeroSection() {
     target.current.active = true;
   };
 
+  // --- BACKEND CONNECTION: real login ---
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.auth.login(email, password); // stores the token under the correct key automatically
+      onAuthSuccess?.();
+    } catch (err) {
+      alert(err.message || 'Login failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <section
       ref={heroRef}
+      id="home"
       onMouseMove={(e) => setFromClient(e.clientX, e.clientY)}
       onMouseLeave={() => { target.current.active = false; }}
       onTouchMove={(e) => e.touches[0] && setFromClient(e.touches[0].clientX, e.touches[0].clientY)}
       onTouchEnd={() => { target.current.active = false; }}
       className="relative w-full h-screen min-h-[640px] overflow-hidden bg-sky-50"
     >
-      {/* Layer 1: real photo, always underneath. */}
       <img
         src={heroBg}
         alt="Smarter ESG Management for Modern Enterprises"
         className="absolute inset-0 w-full h-full object-cover object-[center_30%]"
       />
 
-      {/* Layer 2: cover — light blue at top fading to white — clipped by the blob to reveal the photo */}
       <div className="absolute inset-0 overflow-hidden">
         <div
           ref={coverRef}
@@ -113,7 +139,6 @@ export default function HeroSection() {
         />
       </div>
 
-      {/* subtle grain so the reveal edge doesn't look too clean */}
       <div
         className="absolute inset-0 pointer-events-none opacity-5 mix-blend-multiply"
         style={{
@@ -122,10 +147,7 @@ export default function HeroSection() {
         }}
       />
 
-      {/* content: two columns */}
       <div className="relative z-10 h-full flex items-center justify-between gap-10 px-[6vw] max-w-[1440px] mx-auto flex-wrap">
-
-        {/* left: copy */}
         <div className="flex-1 min-w-[320px] text-left" style={{ flexBasis: 420 }}>
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#152a40]/[0.06] border border-[#152a40]/10 text-[#1c3a52] text-sm font-semibold tracking-wide mb-5">
             <span className="w-1.5 h-1.5 rounded-full bg-[#2f7fd4]" />
@@ -144,51 +166,26 @@ export default function HeroSection() {
             Monitor environmental impact, strengthen governance, engage employees, and generate real-time ESG insights through one unified enterprise platform.
           </p>
 
-          <div className="flex gap-3.5 mt-8 flex-wrap">
-            <button className="px-6.5 py-3.5 rounded-[10px] bg-[#0f2438] text-white text-[15px] font-semibold shadow-[0_8px_20px_rgba(15,36,56,0.25)] hover:bg-[#16344f] transition-colors">
-              Start building free
-            </button>
-            
-          </div>
-
           <div className="mt-9 text-xs tracking-wide text-[#5b7185] opacity-75">
             move your cursor to look behind the curtain
           </div>
         </div>
 
-        {/* right: login / signup card */}
+        {/* Login card - Sign up / Role selector / OAuth removed, see note above */}
         <div className="flex-none w-full min-w-[300px] max-w-[380px] bg-white/70 backdrop-blur-xl border border-white/60 rounded-[18px] shadow-[0_24px_60px_rgba(15,36,56,0.18)] px-[26px] pt-7 pb-8">
-          <div className="flex bg-[#0f2438]/[0.06] rounded-[10px] p-1 mb-5">
-            <button
-              onClick={() => setIsSignup(false)}
-              className={`flex-1 py-2.5 rounded-[7px] text-sm font-semibold transition-colors ${!isSignup ? "bg-white text-[#0f2438] shadow-sm" : "bg-transparent text-[#5b7185]"}`}
-            >
-              Log in
-            </button>
-            <button
-              onClick={() => setIsSignup(true)}
-              className={`flex-1 py-2.5 rounded-[7px] text-sm font-semibold transition-colors ${isSignup ? "bg-white text-[#0f2438] shadow-sm" : "bg-transparent text-[#5b7185]"}`}
-            >
-              Sign up
-            </button>
+          <div className="mb-5">
+            <h3 className="text-[#0f2438] text-base font-bold">Log in to EcoSphere</h3>
+            <p className="text-xs text-[#5b7185] mt-1">Accounts are provisioned by your organization's Admin.</p>
           </div>
 
-          <div className="flex flex-col gap-3">
-            {isSignup && (
-              <div>
-                <label className="block text-xs font-semibold text-[#3c5468] mb-1.5">Full name</label>
-                <input
-                  type="text"
-                  placeholder="Ada Lovelace"
-                  className="w-full px-3.5 py-2.5 rounded-[9px] border border-[#0f2438]/15 text-sm text-[#0f2438] bg-white outline-none focus:border-[#2f7fd4]"
-                />
-              </div>
-            )}
-
+          <form onSubmit={handleAuthSubmit} className="flex flex-col gap-3">
             <div>
               <label className="block text-xs font-semibold text-[#3c5468] mb-1.5">Email</label>
               <input
                 type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
                 placeholder="you@company.com"
                 className="w-full px-3.5 py-2.5 rounded-[9px] border border-[#0f2438]/15 text-sm text-[#0f2438] bg-white outline-none focus:border-[#2f7fd4]"
               />
@@ -198,30 +195,22 @@ export default function HeroSection() {
               <label className="block text-xs font-semibold text-[#3c5468] mb-1.5">Password</label>
               <input
                 type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
                 placeholder="••••••••"
                 className="w-full px-3.5 py-2.5 rounded-[9px] border border-[#0f2438]/15 text-sm text-[#0f2438] bg-white outline-none focus:border-[#2f7fd4]"
               />
             </div>
 
-            <button className="mt-1.5 w-full py-3 rounded-[9px] bg-[#0f2438] text-white text-sm font-semibold hover:bg-[#16344f] transition-colors">
-              {isSignup ? "Create account" : "Log in"}
+            <button
+              type="submit"
+              disabled={submitting}
+              className="mt-2 w-full py-3 rounded-[9px] bg-[#0f2438] text-white text-sm font-semibold hover:bg-[#16344f] transition-colors disabled:opacity-60"
+            >
+              {submitting ? 'Logging in...' : 'Log in'}
             </button>
-
-            <div className="flex items-center gap-2.5 my-1 text-[#8296a8] text-xs">
-              <div className="flex-1 h-px bg-[#0f2438]/10" />
-              or continue with
-              <div className="flex-1 h-px bg-[#0f2438]/10" />
-            </div>
-
-            <div className="flex gap-2.5">
-              <button className="flex-1 py-2.5 rounded-[9px] border border-[#0f2438]/15 bg-white text-[#0f2438] text-[13.5px] font-semibold hover:bg-gray-50 transition-colors">
-                Google
-              </button>
-              <button className="flex-1 py-2.5 rounded-[9px] border border-[#0f2438]/15 bg-white text-[#0f2438] text-[13.5px] font-semibold hover:bg-gray-50 transition-colors">
-                GitHub
-              </button>
-            </div>
-          </div>
+          </form>
         </div>
       </div>
     </section>

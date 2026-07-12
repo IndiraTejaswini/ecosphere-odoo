@@ -14,9 +14,55 @@ import GovernanceDashboard from './GovernanceDashboard';
 import ReportsDashboard from './ReportsDashboard';
 import SettingsDashboard from './SettingsDashboard';
 
-export default function Dashboard({ currentTab, onTabChange }) {
+// --- BACKEND CONNECTION ---
+import api from '../api';
+
+export default function Dashboard({ currentTab, onTabChange, userRole, onLogout }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+
+  // --- BACKEND CONNECTION: live ESG scores for the Overview tab's 4 ScoreCards ---
+  const [esgData, setEsgData] = useState(null);
+  const [scoresLoading, setScoresLoading] = useState(true);
+  const [scoresError, setScoresError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEsgScores() {
+      setScoresLoading(true);
+      setScoresError('');
+      try {
+        const result = await api.reports.esgScore();
+        if (!cancelled) setEsgData(result);
+      } catch (err) {
+        if (!cancelled) {
+          setScoresError(
+            err.status === 403
+              ? 'ESG scores are admin-only. Log in as the admin account via TempLogin.'
+              : err.message || 'Failed to load ESG scores'
+          );
+        }
+      } finally {
+        if (!cancelled) setScoresLoading(false);
+      }
+    }
+
+    loadEsgScores();
+    return () => {
+      cancelled = true;
+    };
+  }, []); // fetched once - Dashboard stays mounted while tabs switch, no need to refetch per-tab
+
+  // Org-wide pillar scores = average of each department's pillar score.
+  // (esg-score returns per-department scores + one overall weighted total;
+  // it doesn't return separate org-wide E/S/G numbers, so we derive them here.)
+  const average = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null);
+  const environmentalScore = esgData ? average(esgData.departments.map((d) => d.environmentalScore)) : null;
+  const socialScore = esgData ? average(esgData.departments.map((d) => d.socialScore)) : null;
+  const governanceScore = esgData ? average(esgData.departments.map((d) => d.governanceScore)) : null;
+  const overallScore = esgData ? esgData.organizationOverallScore : null;
+  // --- END BACKEND CONNECTION (scores) ---
 
   const navLabels = [
     'Overview',
@@ -54,6 +100,16 @@ export default function Dashboard({ currentTab, onTabChange }) {
       case 'Gamification':
         return <GamificationDashboard />;
       case 'Governance':
+        // Gate preserved from the user's own App.jsx restructure - relocated
+        // here so it lives alongside the rest of the tab routing instead of
+        // being duplicated across two files.
+        if (userRole && userRole !== 'admin') {
+          return (
+            <div className="p-12 text-center text-slate-500 bg-white border border-slate-200 rounded-3xl m-8 font-bold shadow-xs">
+              Access Restricted: Corporate Admin credentials are required to view Governance parameters.
+            </div>
+          );
+        }
         return <GovernanceDashboard />;
       case 'Reports':
         return <ReportsDashboard />;
@@ -84,26 +140,53 @@ export default function Dashboard({ currentTab, onTabChange }) {
                 <div className="lg:col-span-1 grid grid-cols-3 lg:grid-cols-1 gap-3 w-full border-t lg:border-t-0 lg:border-l border-slate-200/60 pt-6 lg:pt-0 lg:pl-8">
                   <div className="text-center lg:text-left">
                     <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Environmental</span>
-                    <span className="text-sm font-black text-emerald-600 font-mono">40% Alloc</span>
+                    <span className="text-sm font-black text-emerald-600 font-mono">
+                      {esgData ? `${Math.round(esgData.weighting.environmental * 100)}% Alloc` : '40% Alloc'}
+                    </span>
                   </div>
                   <div className="text-center lg:text-left">
                     <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Social Index</span>
-                    <span className="text-sm font-black text-sky-600 font-mono">30% Alloc</span>
+                    <span className="text-sm font-black text-sky-600 font-mono">
+                      {esgData ? `${Math.round(esgData.weighting.social * 100)}% Alloc` : '30% Alloc'}
+                    </span>
                   </div>
                   <div className="text-center lg:text-left">
                     <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Governance</span>
-                    <span className="text-sm font-black text-[#A10559] font-mono">30% Alloc</span>
+                    <span className="text-sm font-black text-[#A10559] font-mono">
+                      {esgData ? `${Math.round(esgData.weighting.governance * 100)}% Alloc` : '30% Alloc'}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <ScoreCard title="Environmental Score" score={82} glowColor="16, 185, 129" metricColor="text-emerald-600" />
-              <ScoreCard title="Social Score" score={74} glowColor="14, 165, 233" metricColor="text-sky-600" />
-              <ScoreCard title="Governance Score" score={88} glowColor="161, 5, 89" customGlowHex="#A10559" metricColor="text-[#A10559]" /> 
-              <ScoreCard title="Overall ESG Score" score={81} glowColor="71, 85, 105" metricColor="text-slate-700" isOverall />
-            </div>
+            {/* --- BACKEND CONNECTION: real scores replace the old hardcoded 82/74/88/81 --- */}
+            {scoresError && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold rounded-2xl px-6 py-4">
+                ⚠️ {scoresError}
+              </div>
+            )}
+
+            {scoresLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[1, 2, 3, 4].map((i) => (
+                  <div
+                    key={i}
+                    className="bg-white rounded-3xl border border-slate-200/60 p-8 h-32 animate-pulse flex items-center justify-center text-slate-300 text-xs font-bold uppercase tracking-wider"
+                  >
+                    Loading score...
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <ScoreCard title="Environmental Score" score={environmentalScore ?? 0} glowColor="16, 185, 129" metricColor="text-emerald-600" />
+                <ScoreCard title="Social Score" score={socialScore ?? 0} glowColor="14, 165, 233" metricColor="text-sky-600" />
+                <ScoreCard title="Governance Score" score={governanceScore ?? 0} glowColor="161, 5, 89" customGlowHex="#A10559" metricColor="text-[#A10559]" />
+                <ScoreCard title="Overall ESG Score" score={overallScore ?? 0} glowColor="71, 85, 105" metricColor="text-slate-700" isOverall />
+              </div>
+            )}
+            {/* --- END BACKEND CONNECTION --- */}
 
             <AnalyticsSection />
 
@@ -164,9 +247,13 @@ export default function Dashboard({ currentTab, onTabChange }) {
           <span className="text-[10px] font-mono tracking-tight text-slate-400 hidden sm:inline-block bg-white/90 border border-slate-200/40 px-2.5 py-1 rounded-lg shadow-3xs">
             QUALIFIER NODE // SECURE
           </span>
-          <div className="w-8 h-8 rounded-xl bg-[#0f2438] text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-sm">
+          <button
+            onClick={onLogout}
+            title="Log out"
+            className="w-8 h-8 rounded-xl bg-[#0f2438] text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-sm hover:bg-[#16344f] transition-colors cursor-pointer"
+          >
             TZ
-          </div>
+          </button>
         </div>
       </header>
 

@@ -1,52 +1,172 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import BentoGlowEffect from '../components/BentoGlowEffect';
 
+// --- BACKEND CONNECTION ---
+import api from '../api';
+
+// Backend custom-report filter only understands these 3 modules (no
+// "Gamification" option exists server-side - unrecognized values silently
+// fall back to 'environmental').
+const REPORT_MODULES = ['environmental', 'social', 'governance'];
+
+function getDateRangeBounds(label) {
+  if (label === 'Q1 2026') return { dateFrom: '2026-01-01', dateTo: '2026-03-31' };
+  if (label === 'Q2 2026') return { dateFrom: '2026-04-01', dateTo: '2026-06-30' };
+  if (label === 'Full Year 2025') return { dateFrom: '2025-01-01', dateTo: '2025-12-31' };
+  return null; // 'Custom Window' - handled via customDateFrom/customDateTo instead
+}
+
 export default function ReportsDashboard() {
-  const [activeSubTab, setActiveSubTab] = useState('ESG Summary');
   const [selectedTemplate, setSelectedTemplate] = useState('ESG Summary');
-  
-  // Custom Filter State Repositories
+
+  // --- BACKEND CONNECTION: real filter option data ---
+  const [departments, setDepartments] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [challenges, setChallenges] = useState([]);
+  const [csrCategories, setCsrCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
   const [filters, setFilters] = useState({
     dateRange: 'Q2 2026',
-    department: 'All Departments',
-    module: 'All Modules',
-    employee: 'All Personnel',
-    challenge: 'All Challenges',
-    esgCategory: 'All Categories'
+    customDateFrom: '',
+    customDateTo: '',
+    department: '',
+    module: 'environmental',
+    employee: '',
+    challenge: '',
+    esgCategory: '',
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
-  const [reportLogs, setReportLogs] = useState([
-    { id: 'REP-091', name: 'Q1 Corporate Carbon Ledger', type: 'Environmental', Format: 'PDF', date: '2026-04-10', size: '4.2 MB' },
-    { id: 'REP-092', name: 'DEI Workforce Mix Disclosure', type: 'Social', Format: 'Excel', date: '2026-05-18', size: '1.8 MB' },
-    { id: 'REP-093', name: 'Global Audit Signoff Matrix', type: 'Governance', Format: 'CSV', date: '2026-06-02', size: '840 KB' },
-  ]);
+  // No backend model stores report history - this is an in-session-only log,
+  // populated with REAL record counts from real API calls (starts empty
+  // rather than pre-seeded with fake rows that don't correspond to anything).
+  const [reportLogs, setReportLogs] = useState([]);
 
-  // Design Tokens (Slate Neutral Charcoal)
-  const charcoalPrimary = "#334155"; 
-  const charcoalAccent = "#475569";
+  const charcoalPrimary = '#334155';
+  const charcoalAccent = '#475569';
+
+  async function loadFilterOptions() {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const [deptRes, challengesRes, categoriesRes] = await Promise.all([
+        api.departments.list({ limit: 100 }),
+        api.challenges.list({ limit: 100 }),
+        api.categories.list({ limit: 100 }),
+      ]);
+      setDepartments(deptRes.data);
+      setChallenges(challengesRes.data);
+      setCsrCategories(categoriesRes.data.filter((c) => c.type === 'CSR Activity'));
+
+      try {
+        const { data } = await api.employees.list({ limit: 100 });
+        setEmployees(data);
+      } catch {
+        setEmployees([]); // non-admin - employee filter just won't be available
+      }
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load report filter options');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadFilterOptions();
+  }, []);
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }));
   };
 
-  const handleRunReport = () => {
+  function buildFilterParams(moduleOverride) {
+    const dateBounds = filters.dateRange === 'Custom Window'
+      ? { dateFrom: filters.customDateFrom, dateTo: filters.customDateTo }
+      : getDateRangeBounds(filters.dateRange);
+
+    return {
+      department: filters.department || undefined,
+      module: moduleOverride || filters.module,
+      dateFrom: dateBounds?.dateFrom,
+      dateTo: dateBounds?.dateTo,
+      employee: filters.employee || undefined,
+      challenge: filters.challenge || undefined,
+      esgCategory: filters.esgCategory || undefined,
+    };
+  }
+
+  function pushLog(name, type, params, format = 'PDF', recordCount) {
+    const newLog = {
+      id: `REP-${Date.now().toString().slice(-6)}`,
+      name,
+      type,
+      Format: format,
+      date: new Date().toISOString().split('T')[0],
+      recordCount,
+      params,
+    };
+    setReportLogs((prev) => [newLog, ...prev]);
+  }
+
+  // --- BACKEND CONNECTION: Run Query (custom report builder) ---
+  async function handleRunReport() {
     setIsGenerating(true);
-    setTimeout(() => {
+    try {
+      const params = buildFilterParams();
+      const result = await api.reports.custom(params);
+      pushLog(`Custom ${params.module} Report (${filters.dateRange})`, params.module, params, 'CSV', result.count);
+      alert(`🚀 Query complete — ${result.count} matching record(s) found.`);
+    } catch (err) {
+      alert(err.message || 'Report query failed');
+    } finally {
       setIsGenerating(false);
-      const newId = `REP-${Math.floor(100 + Math.random() * 900)}`;
-      const newLog = {
-        id: newId,
-        name: `Custom ${filters.module} Asset (${filters.dateRange})`,
-        type: filters.module === 'All Modules' ? 'Integrated ESG' : filters.module,
-        Format: 'PDF',
-        date: new Date().toISOString().split('T')[0],
-        size: '1.1 MB'
-      };
-      setReportLogs([newLog, ...reportLogs]);
-      alert(`🚀 Query Engine Compiled Successfully!\nCreated item record target: ${newId}`);
-    }, 1100);
-  };
+    }
+  }
+
+  // --- BACKEND CONNECTION: Standard template "Generate Report" ---
+  async function handleGenerateTemplate(templateId) {
+    try {
+      if (templateId === 'ESG Summary') {
+        const result = await api.reports.esgScore();
+        alert(`ESG Summary: organization overall score ${result.organizationOverallScore}/100 across ${result.departments.length} department(s).`);
+        pushLog('ESG Summary Profile', 'ESG Summary', {}, 'PDF', result.departments.length);
+      } else {
+        const moduleParam = templateId.toLowerCase();
+        const params = { module: moduleParam };
+        const result = await api.reports.custom(params);
+        pushLog(`${templateId} Report`, templateId, params, 'CSV', result.count);
+        alert(`✅ ${templateId} Report compiled — ${result.count} record(s).`);
+      }
+    } catch (err) {
+      alert(err.message || 'Report generation failed');
+    }
+  }
+
+  // --- BACKEND CONNECTION: Export buttons (current filter state) ---
+  async function handleExport(format) {
+    try {
+      const params = buildFilterParams();
+      if (format === 'pdf') await api.reports.exportPdf(params);
+      else if (format === 'excel') await api.reports.exportExcel(params);
+      else await api.reports.exportCsv(params);
+    } catch (err) {
+      alert(err.message || 'Export failed');
+    }
+  }
+
+  // --- BACKEND CONNECTION: re-download a historical log entry using its saved filter snapshot ---
+  async function handleDownloadLog(log) {
+    try {
+      const fmt = (log.Format || 'csv').toLowerCase();
+      if (fmt === 'pdf') await api.reports.exportPdf(log.params);
+      else if (fmt === 'excel') await api.reports.exportExcel(log.params);
+      else await api.reports.exportCsv(log.params);
+    } catch (err) {
+      alert(err.message || 'Download failed');
+    }
+  }
 
   const templates = [
     {
@@ -75,6 +195,10 @@ export default function ReportsDashboard() {
     }
   ];
 
+  if (loading) {
+    return <div className="p-12 text-center text-slate-400 font-bold text-sm">Loading report filters...</div>;
+  }
+
   return (
     <div className="p-6 min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col gap-6">
       
@@ -90,8 +214,11 @@ export default function ReportsDashboard() {
         </div>
       </div>
 
-      {/* 1. TOP SUB-NAVIGATION TABS */}
-      
+      {loadError && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold rounded-2xl px-6 py-4">
+          ⚠️ {loadError}
+        </div>
+      )}
 
       {/* 2. STANDARD REPORT TEMPLATES DECK GRID */}
       <div>
@@ -120,7 +247,7 @@ export default function ReportsDashboard() {
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    alert(`Compiling preformatted template asset for: ${tmpl.title}`);
+                    handleGenerateTemplate(tmpl.id);
                   }}
                   className="w-full text-white py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all hover:opacity-90 shadow-sm"
                   style={{ backgroundColor: charcoalPrimary }}
@@ -158,6 +285,12 @@ export default function ReportsDashboard() {
               <option value="Full Year 2025">Full Year 2025</option>
               <option value="Custom Window">Custom Window ▾</option>
             </select>
+            {filters.dateRange === 'Custom Window' && (
+              <div className="flex gap-1 mt-1.5">
+                <input type="date" value={filters.customDateFrom} onChange={(e) => handleFilterChange('customDateFrom', e.target.value)} className="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-[11px] w-full" />
+                <input type="date" value={filters.customDateTo} onChange={(e) => handleFilterChange('customDateTo', e.target.value)} className="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-[11px] w-full" />
+              </div>
+            )}
           </div>
 
           <div>
@@ -167,10 +300,8 @@ export default function ReportsDashboard() {
               onChange={(e) => handleFilterChange('department', e.target.value)}
               className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs font-bold w-full focus:ring-1 focus:ring-slate-500 outline-none"
             >
-              <option value="All Departments">All Departments ▾</option>
-              <option value="Manufacturing">Manufacturing</option>
-              <option value="Logistics">Logistics Division</option>
-              <option value="Corporate HQ">Corporate HQ</option>
+              <option value="">All Departments ▾</option>
+              {departments.map((d) => <option key={d._id} value={d._id}>{d.name}</option>)}
             </select>
           </div>
 
@@ -181,11 +312,7 @@ export default function ReportsDashboard() {
               onChange={(e) => handleFilterChange('module', e.target.value)}
               className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs font-bold w-full focus:ring-1 focus:ring-slate-500 outline-none"
             >
-              <option value="All Modules">All Modules ▾</option>
-              <option value="Environmental">Environmental</option>
-              <option value="Social">Social</option>
-              <option value="Governance">Governance</option>
-              <option value="Gamification">Gamification</option>
+              {REPORT_MODULES.map((m) => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
             </select>
           </div>
 
@@ -196,11 +323,10 @@ export default function ReportsDashboard() {
               onChange={(e) => handleFilterChange('employee', e.target.value)}
               className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs font-bold w-full focus:ring-1 focus:ring-slate-500 outline-none"
             >
-              <option value="All Personnel">All Personnel ▾</option>
-              <option value="Sarah Jenkins">Sarah Jenkins</option>
-              <option value="Aditi Rao">Aditi Rao</option>
-              <option value="Michael Chang">Michael Chang</option>
+              <option value="">All Personnel ▾</option>
+              {employees.map((e) => <option key={e._id} value={e._id}>{e.name}</option>)}
             </select>
+            {employees.length === 0 && <p className="text-[10px] text-amber-600 font-bold mt-1">Requires admin access</p>}
           </div>
 
           <div>
@@ -210,10 +336,10 @@ export default function ReportsDashboard() {
               onChange={(e) => handleFilterChange('challenge', e.target.value)}
               className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs font-bold w-full focus:ring-1 focus:ring-slate-500 outline-none"
             >
-              <option value="All Challenges">All Challenges ▾</option>
-              <option value="Sustainability Sprint">Sustainability Sprint</option>
-              <option value="Recycle Drive">Recycle Drive</option>
+              <option value="">All Challenges ▾</option>
+              {challenges.map((c) => <option key={c._id} value={c._id}>{c.title}</option>)}
             </select>
+            <p className="text-[10px] text-amber-600 font-bold mt-1">⚠️ No effect currently - backend data model gap</p>
           </div>
 
           <div>
@@ -223,11 +349,10 @@ export default function ReportsDashboard() {
               onChange={(e) => handleFilterChange('esgCategory', e.target.value)}
               className="bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs font-bold w-full focus:ring-1 focus:ring-slate-500 outline-none"
             >
-              <option value="All Categories">All Categories ▾</option>
-              <option value="Carbon Footprint">Carbon Footprint</option>
-              <option value="Labor Mix">Labor Mix</option>
-              <option value="Audit Compliance">Audit Compliance</option>
+              <option value="">All Categories ▾</option>
+              {csrCategories.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
             </select>
+            <p className="text-[10px] text-slate-400 font-semibold mt-1">Only applies when Module = Social</p>
           </div>
         </div>
 
@@ -252,19 +377,19 @@ export default function ReportsDashboard() {
           <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
             <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 px-2">Export Formats:</span>
             <button 
-              onClick={() => alert(`Exporting current criteria selection matrix out to PDF layout framework.`)}
+              onClick={() => handleExport('pdf')}
               className="bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-black border border-slate-200 shadow-xs transition-colors"
             >
               📄 PDF
             </button>
             <button 
-              onClick={() => alert(`Exporting raw table schemas directly to .xlsx sheet array.`)}
+              onClick={() => handleExport('excel')}
               className="bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-black border border-slate-200 shadow-xs transition-colors"
             >
               📈 Excel
             </button>
             <button 
-              onClick={() => alert(`Streaming raw flat-file comma-delimited data packets out to .csv format.`)}
+              onClick={() => handleExport('csv')}
               className="bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5 rounded-lg text-xs font-black border border-slate-200 shadow-xs transition-colors"
             >
               🔢 CSV
@@ -277,7 +402,7 @@ export default function ReportsDashboard() {
       <BentoGlowEffect glowColor="71, 85, 105" spotlightRadius={300} className="p-1">
         <div className="overflow-x-auto border border-slate-300 rounded-2xl bg-white shadow-sm">
           <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex justify-between items-center">
-            <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Recently Evaluated Output Registers</h4>
+            <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Recently Evaluated Output Registers (this session)</h4>
             <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-mono font-bold">Total Logs: {reportLogs.length}</span>
           </div>
           <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
@@ -287,33 +412,41 @@ export default function ReportsDashboard() {
                 <th className="p-4">Asset Label Designation</th>
                 <th className="p-4">Structural Type</th>
                 <th className="p-4">Compiled Date</th>
-                <th className="p-4">Payload Size</th>
+                <th className="p-4">Records</th>
                 <th className="p-4 text-center">Action Target</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-semibold text-slate-800">
-              {reportLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="p-4 font-mono text-xs text-slate-500 font-bold">{log.id}</td>
-                  <td className="p-4 text-slate-900 font-black">{log.name}</td>
-                  <td className="p-4">
-                    <span className="px-2 py-0.5 border border-slate-200 rounded text-xs text-slate-600 bg-slate-50">
-                      {log.type}
-                    </span>
-                  </td>
-                  <td className="p-4 font-mono text-xs text-slate-500">{log.date}</td>
-                  <td className="p-4 font-mono text-xs text-slate-600">{log.size}</td>
-                  <td className="p-4 text-center">
-                    <button 
-                      onClick={() => alert(`Downloading artifact stream container for package record: ${log.id}`)}
-                      className="text-xs font-black underline hover:text-slate-950 transition-colors"
-                      style={{ color: charcoalAccent }}
-                    >
-                      Download {log.Format}
-                    </button>
+              {reportLogs.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="p-8 text-center text-slate-400 font-bold">
+                    No reports run yet this session - use "Generate Report" above or "Run Query" below.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                reportLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="p-4 font-mono text-xs text-slate-500 font-bold">{log.id}</td>
+                    <td className="p-4 text-slate-900 font-black">{log.name}</td>
+                    <td className="p-4">
+                      <span className="px-2 py-0.5 border border-slate-200 rounded text-xs text-slate-600 bg-slate-50">
+                        {log.type}
+                      </span>
+                    </td>
+                    <td className="p-4 font-mono text-xs text-slate-500">{log.date}</td>
+                    <td className="p-4 font-mono text-xs text-slate-600">{log.recordCount ?? '—'}</td>
+                    <td className="p-4 text-center">
+                      <button 
+                        onClick={() => handleDownloadLog(log)}
+                        className="text-xs font-black underline hover:text-slate-950 transition-colors"
+                        style={{ color: charcoalAccent }}
+                      >
+                        Download {log.Format}
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

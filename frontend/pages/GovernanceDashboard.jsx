@@ -1,48 +1,107 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import BentoGlowEffect from '../components/BentoGlowEffect';
 
-// --- MOCK REGISTRY FOR POLICIES ---
-const INITIAL_POLICIES = [
-  { id: 1, title: "Global Whistleblower Protection Mandate", code: "POL-GOV-001", effectiveDate: "2026-01-10", version: "v4.2", riskTier: "Critical", status: "Active" },
-  { id: 2, title: "Anti-Bribery and Corruption Framework", code: "POL-FIN-023", effectiveDate: "2026-02-18", version: "v3.0", riskTier: "High", status: "Active" },
-  { id: 3, title: "Sustainable Supply Chain & Scope-3 Standards", code: "POL-ESG-088", effectiveDate: "2026-04-05", version: "v1.1", riskTier: "Medium", status: "Under Review" },
-  { id: 4, title: "Data Privacy & Cross-Border Governance", code: "POL-IT-104", effectiveDate: "2025-11-12", version: "v5.0", riskTier: "Critical", status: "Active" },
-];
+// --- BACKEND CONNECTION ---
+import api from '../api';
 
-// --- MOCK REGISTRY FOR POLICY ACKNOWLEDGEMENTS ---
-const INITIAL_ACKNOWLEDGEMENTS = [
-  { id: 501, employee: "Sarah Jenkins", department: "Logistics & Procurement", policyName: "Sustainable Supply Chain & Scope-3 Standards", completionDate: "2026-05-18", status: "Attested" },
-  { id: 502, employee: "Michael Chang", department: "Engineering & R&D", policyName: "Anti-Bribery and Corruption Framework", completionDate: "2026-06-01", status: "Attested" },
-  { id: 503, employee: "Elena Rostova", department: "Legal & Corporate Affairs", policyName: "Global Whistleblower Protection Mandate", completionDate: "—", status: "Overdue" },
-  { id: 504, employee: "David Kojo", department: "Global Operations", policyName: "Data Privacy & Cross-Border Governance", completionDate: "2026-06-14", status: "Attested" },
-];
-
-// --- MOCK REGISTRY FOR AUDITS LOG DATA ---
-const INITIAL_AUDITS = [
-  { id: 301, title: "Q2 Supply Chain Carbon Audit", department: "Logistics & Procurement", auditor: "Deloitte ESG Practice", date: "2026-05-14", findings: "Minor scope-3 emission tracking gaps identified.", status: "Completed" },
-  { id: 302, title: "Annual Data Privacy & Security Audit", department: "IT & Global Infrastructure", auditor: "Internal Audit Committee", date: "2026-06-02", findings: "Legacy data storage nodes require encryption updates.", status: "Under Review" },
-  { id: 303, title: "EHS Workplace Safety Assessment", department: "Manufacturing Plant 4", auditor: "OSHA Certified Panel", date: "2026-06-28", findings: "Hazardous waste storage alignment protocols fully verified.", status: "Completed" },
-  { id: 304, title: "Anti-Bribery & Corruption Review", department: "Legal & Corporate Affairs", auditor: "Compliance Group Intl.", date: "2026-07-10", findings: "Whistleblower reporting portal access points need modernization.", status: "Under Review" },
-];
-
-// --- MOCK REGISTRY FOR COMPLIANCE ISSUES SUB-TABLE (RULE-DRIVEN LOGIC) ---
-const INITIAL_COMPLIANCE_ISSUES = [
-  { id: 1, auditId: 301, issue: "Scope-3 Freight Supplier Log Mismatch", severity: "Medium", department: "Logistics & Procurement", owner: "Marcus Vance", dueDate: "2026-08-15", status: "Open" },
-  { id: 2, auditId: 302, issue: "Unencrypted PII Legacy Database Node", severity: "High", department: "IT & Global Infrastructure", owner: "Diana Prince", dueDate: "2026-07-30", status: "Open" },
-  { id: 3, auditId: 302, issue: "Stale Access Credentials for Contractors", severity: "Medium", department: "IT & Global Infrastructure", owner: "Diana Prince", dueDate: "2026-08-22", status: "Resolved" },
-  { id: 4, auditId: 304, issue: "Whistleblower Portal SSL Protocol Expiry", severity: "High", department: "Legal & Corporate Affairs", owner: "Elena Rostova", dueDate: "2026-07-25", status: "Open" },
-];
+function formatDate(isoString) {
+  if (!isoString) return '—';
+  return new Date(isoString).toISOString().slice(0, 10);
+}
 
 export default function GovernanceDashboard() {
   const [activeSubTab, setActiveSubTab] = useState('Audits');
-  const [policies] = useState(INITIAL_POLICIES);
-  const [acknowledgements] = useState(INITIAL_ACKNOWLEDGEMENTS);
-  const [audits] = useState(INITIAL_AUDITS);
-  const [issues] = useState(INITIAL_COMPLIANCE_ISSUES);
+
+  // --- BACKEND CONNECTION: real data ---
+  const [policies, setPolicies] = useState([]);
+  const [acknowledgements, setAcknowledgements] = useState([]); // combined Attested + derived Overdue rows
+  const [audits, setAudits] = useState([]);
+  const [issues, setIssues] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [employees, setEmployees] = useState([]); // admin-only, may stay empty for non-admins
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRowId, setSelectedRowId] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  const govPlum = "#A10559";
+  const govPlum = '#A10559';
+
+  async function loadAllData() {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const [policiesRes, auditsRes, issuesRes, deptRes] = await Promise.all([
+        api.policies.list({ limit: 100 }),
+        api.governance.listAudits({ limit: 100 }),
+        api.governance.listComplianceIssues({ limit: 100 }),
+        api.departments.list({ limit: 100 }),
+      ]);
+      setPolicies(policiesRes.data);
+      setAudits(auditsRes.data);
+      setIssues(issuesRes.data);
+      setDepartments(deptRes.data);
+
+      // Acknowledgements + employee roster: admin-only data. No single
+      // "list every acknowledgement" endpoint exists on the backend, so we
+      // call the per-policy endpoint once per policy and combine client-side.
+      // Fine at hackathon scale (a handful of policies); a dedicated backend
+      // endpoint would be the real fix at larger scale.
+      try {
+        const { data: allEmployees } = await api.employees.list({ limit: 100 });
+        setEmployees(allEmployees);
+        const employeesById = Object.fromEntries(allEmployees.map((e) => [e._id, e]));
+
+        const ackRows = [];
+        for (const policy of policiesRes.data) {
+          const acks = await api.governance.listAcknowledgements(policy._id);
+          const ackedIds = new Set(acks.map((a) => a.employee._id));
+
+          acks.forEach((a) => {
+            const emp = employeesById[a.employee._id];
+            ackRows.push({
+              id: a._id,
+              employee: a.employee.name,
+              department: emp?.department?.name || '—',
+              policyName: policy.title,
+              completionDate: a.acknowledgedAt,
+              status: 'Attested',
+            });
+          });
+
+          if (policy.mandatoryAcknowledgement) {
+            allEmployees
+              .filter((e) => !ackedIds.has(e._id))
+              .forEach((e) => {
+                ackRows.push({
+                  id: `${policy._id}-${e._id}`,
+                  employee: e.name,
+                  department: e.department?.name || '—',
+                  policyName: policy.title,
+                  completionDate: null,
+                  status: 'Overdue',
+                });
+              });
+          }
+        }
+        setAcknowledgements(ackRows);
+      } catch {
+        setEmployees([]);
+        setAcknowledgements([]);
+      }
+    } catch (err) {
+      setLoadError(err.message || 'Failed to load governance data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAllData();
+  }, []);
 
   const handleTabChange = (tabName) => {
     setActiveSubTab(tabName);
@@ -51,8 +110,49 @@ export default function GovernanceDashboard() {
   };
 
   const filteredIssues = selectedRowId 
-    ? issues.filter(issue => issue.auditId === selectedRowId)
+    ? issues.filter(issue => issue.audit === selectedRowId || issue.audit?._id === selectedRowId)
     : issues;
+
+  // --- BACKEND CONNECTION: "New X" create modals ---
+  function openCreateModal() {
+    const defaults = {
+      Policies: { title: '', description: '', category: 'Governance', version: '1.0', mandatoryAcknowledgement: true },
+      'Policy Acknowledgements': { policy: '' }, // "acknowledge as myself" flow, not admin-create-on-behalf-of
+      Audits: { title: '', department: '', auditor: '', date: '', findings: '', status: 'Under Review' },
+      'Compliance Issues': { audit: '', department: '', severity: 'Medium', description: '', owner: '', dueDate: '' },
+    };
+    setFormData(defaults[activeSubTab] || {});
+    setIsModalOpen(true);
+  }
+
+  async function handleSave(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (activeSubTab === 'Policies') {
+        await api.policies.create(formData);
+      } else if (activeSubTab === 'Policy Acknowledgements') {
+        await api.governance.acknowledgePolicy(formData.policy);
+      } else if (activeSubTab === 'Audits') {
+        await api.governance.createAudit(formData);
+      } else if (activeSubTab === 'Compliance Issues') {
+        const body = { ...formData };
+        if (!body.audit) delete body.audit; // optional field
+        await api.governance.createComplianceIssue(body);
+      }
+      setIsModalOpen(false);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+  // --- END create modal handling ---
+
+  if (loading) {
+    return <div className="p-12 text-center text-slate-400 font-bold text-sm">Loading governance data...</div>;
+  }
 
   return (
     <div className="p-6 min-h-screen bg-slate-50 text-slate-900">
@@ -75,22 +175,28 @@ export default function GovernanceDashboard() {
         ))}
       </div>
 
+      {loadError && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold rounded-2xl px-6 py-4 mb-6">
+          ⚠️ {loadError}
+        </div>
+      )}
+
       {/* 2. DYNAMIC WORKSPACE UTILITY ACTION ROW */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div className="flex items-center flex-wrap gap-2">
           <button 
-            onClick={() => alert(`Launching: + New Governance ${activeSubTab.replace('s', '')}`)}
+            onClick={openCreateModal}
             className="text-white px-4 py-2 rounded font-bold text-sm shadow-sm transition-all hover:opacity-90"
             style={{ backgroundColor: govPlum }}
           >
-            + New {activeSubTab === 'Audits' ? 'Audit' : activeSubTab === 'Compliance Issues' ? 'Violation Flag' : activeSubTab === 'Policy Acknowledgements' ? 'Log Ledger' : 'Policy'}
+            + {activeSubTab === 'Audits' ? 'New Audit' : activeSubTab === 'Compliance Issues' ? 'New Violation Flag' : activeSubTab === 'Policy Acknowledgements' ? 'Acknowledge a Policy' : 'New Policy'}
           </button>
           
           <button 
-            onClick={() => alert(`Compiling export array manifest for systemic ${activeSubTab} logs...`)}
+            onClick={() => api.reports.exportCsv({ module: 'governance' }).catch((err) => alert(err.message))}
             className="bg-white hover:bg-slate-50 text-slate-900 px-4 py-2 rounded font-bold text-sm border border-slate-300 transition-all shadow-sm"
           >
-            Export Controls ▾
+            Export Controls
           </button>
         </div>
 
@@ -116,41 +222,37 @@ export default function GovernanceDashboard() {
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
                   <th className="p-4 w-8"></th>
-                  <th className="p-4">Policy Code</th>
                   <th className="p-4">Corporate Strategy Title</th>
-                  <th className="p-4 text-center">Version Revision</th>
-                  <th className="p-4 text-center">Effective Date</th>
-                  <th className="p-4 text-center">Risk Vector Tier</th>
+                  <th className="p-4 text-center">Category</th>
+                  <th className="p-4 text-center">Version</th>
+                  <th className="p-4 text-center">Created</th>
+                  <th className="p-4 text-center">Mandatory</th>
                   <th className="p-4 text-center">Status Flag</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {policies.filter(p => p.title.toLowerCase().includes(searchTerm.toLowerCase()) || p.code.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
+                {policies.filter(p => p.title.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
                   <tr 
-                    key={row.id} 
+                    key={row._id} 
                     className="hover:bg-slate-50 transition-colors cursor-pointer"
-                    style={selectedRowId === row.id ? { backgroundColor: 'rgba(161, 5, 89, 0.06)' } : {}}
-                    onClick={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
+                    style={selectedRowId === row._id ? { backgroundColor: 'rgba(161, 5, 89, 0.06)' } : {}}
+                    onClick={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)}
                   >
                     <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedRowId === row.id} onChange={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)} className="rounded border-slate-400" style={{ color: govPlum }} />
+                      <input type="checkbox" checked={selectedRowId === row._id} onChange={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)} className="rounded border-slate-400" style={{ color: govPlum }} />
                     </td>
-                    <td className="p-4 font-mono text-xs font-black text-slate-900">{row.code}</td>
                     <td className="p-4 text-slate-900 text-sm font-black">{row.title}</td>
-                    <td className="p-4 text-center font-mono text-xs text-slate-600">{row.version}</td>
-                    <td className="p-4 text-center font-mono text-xs text-slate-600">{row.effectiveDate}</td>
                     <td className="p-4 text-center">
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-black uppercase border ${
-                        row.riskTier === 'Critical' ? 'bg-red-50 text-red-700 border-red-300' : 'bg-amber-50 text-amber-700 border-amber-300'
-                      }`}>
-                        {row.riskTier}
-                      </span>
+                      <span className="px-2 py-0.5 rounded text-[11px] font-black uppercase border bg-slate-100 text-slate-700 border-slate-300">{row.category}</span>
                     </td>
+                    <td className="p-4 text-center font-mono text-xs text-slate-600">v{row.version}</td>
+                    <td className="p-4 text-center font-mono text-xs text-slate-600">{formatDate(row.createdAt)}</td>
+                    <td className="p-4 text-center font-mono text-xs">{row.mandatoryAcknowledgement ? '✅' : '—'}</td>
                     <td className="p-4 text-center">
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${
-                        row.status === 'Active' ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-purple-50 text-purple-700 border-purple-300 animate-pulse'
+                        row.isActive !== false ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-slate-100 text-slate-500 border-slate-300'
                       }`}>
-                        {row.status}
+                        {row.isActive !== false ? 'Active' : 'Inactive'}
                       </span>
                     </td>
                   </tr>
@@ -165,10 +267,12 @@ export default function GovernanceDashboard() {
       {activeSubTab === 'Policy Acknowledgements' && (
         <BentoGlowEffect glowColor="161, 5, 89" spotlightRadius={280} className="p-1">
           <div className="overflow-x-auto border border-slate-300 rounded-xl bg-white shadow-sm">
+            {employees.length === 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border-b border-amber-200 p-3 font-semibold">⚠️ This view requires admin access to compute Overdue rows.</p>
+            )}
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
                 <tr>
-                  <th className="p-4 w-8"></th>
                   <th className="p-4">Employee Contributor</th>
                   <th className="p-4">Operational Division Domain</th>
                   <th className="p-4">Associated Target Policy Document Scope</th>
@@ -177,20 +281,14 @@ export default function GovernanceDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {acknowledgements.filter(a => a.employee.toLowerCase().includes(searchTerm.toLowerCase()) || a.policyName.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
-                  <tr 
-                    key={row.id} 
-                    className="hover:bg-slate-50 transition-colors cursor-pointer"
-                    style={selectedRowId === row.id ? { backgroundColor: 'rgba(161, 5, 89, 0.06)' } : {}}
-                    onClick={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
-                  >
-                    <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedRowId === row.id} onChange={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)} className="rounded border-slate-400" style={{ color: govPlum }} />
-                    </td>
+                {acknowledgements
+                  .filter(a => a.employee.toLowerCase().includes(searchTerm.toLowerCase()) || a.policyName.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .map((row) => (
+                  <tr key={row.id} className="hover:bg-slate-50 transition-colors">
                     <td className="p-4 font-black text-slate-900">{row.employee}</td>
                     <td className="p-4 text-slate-700 text-xs font-bold">{row.department}</td>
                     <td className="p-4 text-slate-800 text-sm">{row.policyName}</td>
-                    <td className="p-4 text-center font-mono text-xs text-slate-600">{row.completionDate}</td>
+                    <td className="p-4 text-center font-mono text-xs text-slate-600">{formatDate(row.completionDate)}</td>
                     <td className="p-4 text-center">
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${
                         row.status === 'Attested' ? 'bg-green-50 text-green-700 border-green-300' : 'bg-red-50 text-red-600 border-red-300 animate-pulse'
@@ -229,7 +327,7 @@ export default function GovernanceDashboard() {
                     <th className="p-4">Audit Assessment Title</th>
                     <th className="p-4">Operating Department</th>
                     <th className="p-4">Assigned Auditor Agency</th>
-                    <th className="p-4 text-center">Closing Date</th>
+                    <th className="p-4 text-center">Date</th>
                     <th className="p-4">Primary Target Findings</th>
                     <th className="p-4 text-center">Status Track</th>
                   </tr>
@@ -237,19 +335,19 @@ export default function GovernanceDashboard() {
                 <tbody className="divide-y divide-slate-200 text-black font-semibold">
                   {audits.filter(a => a.title.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
                     <tr 
-                      key={row.id} 
+                      key={row._id} 
                       className="hover:bg-slate-50 transition-colors cursor-pointer"
-                      style={selectedRowId === row.id ? { backgroundColor: 'rgba(161, 5, 89, 0.06)' } : {}}
-                      onClick={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
+                      style={selectedRowId === row._id ? { backgroundColor: 'rgba(161, 5, 89, 0.06)' } : {}}
+                      onClick={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)}
                     >
                       <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={selectedRowId === row.id} onChange={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)} className="rounded border-slate-400" style={{ color: govPlum }} />
+                        <input type="checkbox" checked={selectedRowId === row._id} onChange={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)} className="rounded border-slate-400" style={{ color: govPlum }} />
                       </td>
                       <td className="p-4 font-black text-slate-900">{row.title}</td>
-                      <td className="p-4 text-slate-700 text-xs font-bold">{row.department}</td>
+                      <td className="p-4 text-slate-700 text-xs font-bold">{row.department?.name || '—'}</td>
                       <td className="p-4 text-slate-800">{row.auditor}</td>
-                      <td className="p-4 text-center font-mono text-xs text-slate-600">{row.date}</td>
-                      <td className="p-4 text-slate-500 max-w-xs truncate text-xs font-medium">{row.findings}</td>
+                      <td className="p-4 text-center font-mono text-xs text-slate-600">{formatDate(row.date)}</td>
+                      <td className="p-4 text-slate-500 max-w-xs truncate text-xs font-medium">{row.findings || '—'}</td>
                       <td className="p-4 text-center">
                         <span className={`px-2.5 py-0.5 rounded text-xs font-black border tracking-wide ${
                           row.status === 'Completed' ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-purple-50 text-purple-700 border-purple-300 animate-pulse'
@@ -273,7 +371,7 @@ export default function GovernanceDashboard() {
                   Linked Compliance Issues Raised From Audit Index
                 </h4>
                 <p className="text-xs text-slate-500 font-bold mt-0.5">
-                  {selectedRowId ? `Displaying filtered violations isolated under Audit Assessment Node ID: ${selectedRowId}` : "Displaying entire operational active compliance violation pipeline."}
+                  {selectedRowId ? `Displaying filtered violations isolated under the selected Audit` : "Displaying entire operational active compliance violation pipeline."}
                 </p>
               </div>
               {selectedRowId && (
@@ -304,8 +402,8 @@ export default function GovernanceDashboard() {
                     </tr>
                   ) : (
                     filteredIssues.map((issue) => (
-                      <tr key={issue.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-3 font-bold text-slate-900">{issue.issue}</td>
+                      <tr key={issue._id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3 font-bold text-slate-900">{issue.description}</td>
                         <td className="p-3 text-center">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
                             issue.severity === 'High' ? 'bg-red-50 text-red-700 border-red-300 font-black' : 'bg-amber-50 text-amber-700 border-amber-300'
@@ -313,9 +411,9 @@ export default function GovernanceDashboard() {
                             {issue.severity}
                           </span>
                         </td>
-                        <td className="p-3 text-slate-600 font-bold">{issue.department}</td>
-                        <td className="p-3 text-slate-900 font-mono font-bold">{issue.owner}</td>
-                        <td className="p-3 text-center font-mono text-slate-600">{issue.dueDate}</td>
+                        <td className="p-3 text-slate-600 font-bold">{issue.department?.name || '—'}</td>
+                        <td className="p-3 text-slate-900 font-mono font-bold">{issue.owner?.name || '—'}</td>
+                        <td className="p-3 text-center font-mono text-slate-600">{formatDate(issue.dueDate)}</td>
                         <td className="p-3 text-center">
                           <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide border ${
                             issue.status === 'Open' ? 'bg-rose-50 text-rose-700 border-rose-300' : 'bg-green-50 text-green-700 border-green-300'
@@ -350,25 +448,25 @@ export default function GovernanceDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-black font-semibold">
-                {issues.filter(i => i.issue.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
+                {issues.filter(i => i.description.toLowerCase().includes(searchTerm.toLowerCase())).map((row) => (
                   <tr 
-                    key={row.id} 
+                    key={row._id} 
                     className="hover:bg-slate-50 transition-colors cursor-pointer"
-                    style={selectedRowId === row.id ? { backgroundColor: 'rgba(161, 5, 89, 0.06)' } : {}}
-                    onClick={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)}
+                    style={selectedRowId === row._id ? { backgroundColor: 'rgba(161, 5, 89, 0.06)' } : {}}
+                    onClick={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)}
                   >
                     <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedRowId === row.id} onChange={() => setSelectedRowId(row.id === selectedRowId ? null : row.id)} className="rounded border-slate-400" style={{ color: govPlum }} />
+                      <input type="checkbox" checked={selectedRowId === row._id} onChange={() => setSelectedRowId(row._id === selectedRowId ? null : row._id)} className="rounded border-slate-400" style={{ color: govPlum }} />
                     </td>
-                    <td className="p-4 font-black text-slate-900">{row.issue}</td>
+                    <td className="p-4 font-black text-slate-900">{row.description}</td>
                     <td className="p-4 text-center">
                       <span className={`px-2 py-0.5 rounded text-xs font-black uppercase border ${row.severity === 'High' ? 'bg-red-50 text-red-700 border-red-300' : 'bg-amber-50 text-amber-700 border-amber-300'}`}>
                         {row.severity}
                       </span>
                     </td>
-                    <td className="p-4 text-slate-800 text-xs font-bold">{row.department}</td>
-                    <td className="p-4 font-bold text-slate-900">{row.owner}</td>
-                    <td className="p-4 text-center font-mono text-xs text-slate-600">{row.dueDate}</td>
+                    <td className="p-4 text-slate-800 text-xs font-bold">{row.department?.name || '—'}</td>
+                    <td className="p-4 font-bold text-slate-900">{row.owner?.name || '—'}</td>
+                    <td className="p-4 text-center font-mono text-xs text-slate-600">{formatDate(row.dueDate)}</td>
                     <td className="p-4 text-center">
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${row.status === 'Open' ? 'bg-rose-50 text-rose-700 border-rose-300' : 'bg-green-50 text-green-700 border-green-300'}`}>
                         {row.status}
@@ -388,6 +486,87 @@ export default function GovernanceDashboard() {
         <span>Governance record matrices are immutable snapshots locked via verified tracking framework ledgers.</span>
       </div>
 
+      {/* --- BACKEND CONNECTION: create modal --- */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsModalOpen(false)}>
+          <form onClick={(e) => e.stopPropagation()} onSubmit={handleSave} className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-black text-slate-900">
+              {activeSubTab === 'Policy Acknowledgements' ? 'Acknowledge a Policy' : `New ${activeSubTab === 'Audits' ? 'Audit' : activeSubTab === 'Compliance Issues' ? 'Violation Flag' : 'Policy'}`}
+            </h3>
+
+            {activeSubTab === 'Policies' && (
+              <>
+                <input required placeholder="Policy Title" value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <textarea required placeholder="Description" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  {['Environmental', 'Social', 'Governance'].map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input placeholder="Version (e.g. 1.0)" value={formData.version || ''} onChange={(e) => setFormData({ ...formData, version: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input type="checkbox" checked={formData.mandatoryAcknowledgement} onChange={(e) => setFormData({ ...formData, mandatoryAcknowledgement: e.target.checked })} />
+                  Mandatory acknowledgement
+                </label>
+              </>
+            )}
+
+            {activeSubTab === 'Policy Acknowledgements' && (
+              <>
+                <select required value={formData.policy || ''} onChange={(e) => setFormData({ ...formData, policy: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select a policy to acknowledge...</option>
+                  {policies.map((p) => <option key={p._id} value={p._id}>{p.title} (v{p.version})</option>)}
+                </select>
+                <p className="text-xs text-slate-500">This acknowledges the policy as the currently logged-in account - there's no admin action to acknowledge on someone else's behalf.</p>
+              </>
+            )}
+
+            {activeSubTab === 'Audits' && (
+              <>
+                <input required placeholder="Audit Title" value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select required value={formData.department || ''} onChange={(e) => setFormData({ ...formData, department: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select department...</option>
+                  {departments.map((d) => <option key={d._id} value={d._id}>{d.name}</option>)}
+                </select>
+                <input required placeholder="Auditor" value={formData.auditor || ''} onChange={(e) => setFormData({ ...formData, auditor: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <input required type="date" value={formData.date || ''} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <textarea placeholder="Findings" value={formData.findings || ''} onChange={(e) => setFormData({ ...formData, findings: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  {['Under Review', 'Completed'].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </>
+            )}
+
+            {activeSubTab === 'Compliance Issues' && (
+              <>
+                <select value={formData.audit || ''} onChange={(e) => setFormData({ ...formData, audit: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Link to an audit (optional)...</option>
+                  {audits.map((a) => <option key={a._id} value={a._id}>{a.title}</option>)}
+                </select>
+                <select required value={formData.department || ''} onChange={(e) => setFormData({ ...formData, department: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Select department...</option>
+                  {departments.map((d) => <option key={d._id} value={d._id}>{d.name}</option>)}
+                </select>
+                <select value={formData.severity} onChange={(e) => setFormData({ ...formData, severity: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  {['Low', 'Medium', 'High'].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <textarea required placeholder="Issue Description" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select required value={formData.owner || ''} onChange={(e) => setFormData({ ...formData, owner: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Assign owner...</option>
+                  {employees.map((e) => <option key={e._id} value={e._id}>{e.name}</option>)}
+                </select>
+                <input required type="date" value={formData.dueDate || ''} onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                {employees.length === 0 && <p className="text-xs text-amber-700">⚠️ Owner list requires admin access to load.</p>}
+              </>
+            )}
+
+            <div className="flex gap-2 justify-end pt-2">
+              <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 rounded font-bold text-sm border border-slate-300 text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button type="submit" disabled={saving} className="px-4 py-2 rounded font-bold text-sm text-white disabled:opacity-50" style={{ backgroundColor: govPlum }}>
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,3 +1,5 @@
+
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Bell, Search, Menu, User, MessageSquare, AtSign, CheckCircle } from 'lucide-react';
 
@@ -16,7 +18,7 @@ const Navbar = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Core Feature: Notification system data mapping exactly to your problem statement
+  // Notification system mock dataset
   const unreadCount = 3;
   const notifications = [
     { id: 1, type: 'answer', text: 'Someone answered your question', icon: MessageSquare, time: '2m ago' },
@@ -24,7 +26,7 @@ const Navbar = () => {
     { id: 3, type: 'mention', text: 'Someone mentioned you using @username', icon: AtSign, time: '2h ago' },
   ];
 
-  // Close notifications on clicking outside
+  // Close notifications dropdown on clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -37,65 +39,68 @@ const Navbar = () => {
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 flex justify-center pt-5 w-full pointer-events-none">
-      {/* 
-        THE SLIDING GLASS PANEL: 
-        Width slides smoothly from 86% down to 65% on scroll, compressing elements into the middle.
-      */}
+      {/* THE SLIDING GLASS PANEL */}
       <nav 
         className={`
           flex items-center justify-between transition-all duration-700 ease-in-out pointer-events-auto font-sans
           ${isScrolled 
-            ? 'w-[65%] max-w-4xl px-6 py-2.5 bg-slate-950/40 backdrop-blur-xl border border-white/10 rounded-full shadow-xl' 
-            : 'w-[86%] max-w-7xl px-8 py-3.5 bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-full'
+            ? 'w-[75%] max-w-5xl px-6 py-2.5 bg-slate-950/40 backdrop-blur-xl border border-white/10 rounded-full shadow-xl' 
+            : 'w-[90%] max-w-7xl px-8 py-3.5 bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-full'
           }
         `}
       >
         {/* LEFT: Platform Branding */}
-        <div className="flex items-center gap-2 cursor-pointer">
-          <div className="w-7 h-7 bg-white text-slate-950 font-black rounded-full flex items-center justify-center text-sm">
-            S
+        <a href="#home" className="flex items-center gap-2 cursor-pointer no-underline">
+          <div className="w-7 h-7 bg-slate-900 text-white font-black rounded-full flex items-center justify-center text-sm">
+            E
           </div>
-          <span className="font-bold text-base tracking-tight text-white">
-            StackIt
+          <span className="font-bold text-base tracking-tight text-slate-900">
+            EcoSphere
           </span>
-        </div>
+        </a>
 
-        {/* MIDDLE: Essential Forum Routes Only */}
-        <ul className="hidden md:flex items-center gap-8 text-xs font-semibold tracking-wide text-slate-300">
-          <li className="text-white cursor-pointer hover:text-white transition-colors">Home</li>
-          <li className="hover:text-white cursor-pointer transition-colors">Questions</li>
-          <li className="hover:text-white cursor-pointer transition-colors">Tags</li>
+        {/* MIDDLE: Comprehensive linked page navigation routes with clean black hover color */}
+        <ul className="hidden lg:flex items-center gap-7 text-xs font-semibold tracking-wide">
+          <li>
+            <a href="#home" className="text-slate-900 cursor-pointer hover:text-black transition-colors no-underline">
+              Home
+            </a>
+          </li>
+          <li>
+            <a href="#tags" className="text-slate-700 hover:text-black cursor-pointer transition-colors no-underline">
+              Features
+            </a>
+          </li>
+          <li>
+            <a href="#about" className="text-slate-700 hover:text-black cursor-pointer transition-colors no-underline">
+              About Us
+            </a>
+          </li>
+          
+          <li>
+            <a href="#testimonials" className="text-slate-700 hover:text-black cursor-pointer transition-colors no-underline">
+              Testimonials
+            </a>
+          </li>
+          <li>
+            <a href="#faqs" className="text-slate-700 hover:text-black cursor-pointer transition-colors no-underline">
+              FAQs
+            </a>
+          </li>
         </ul>
 
         {/* RIGHT: Essential User Actions & Notification Dropdown */}
         <div className="flex items-center gap-4">
           
-          {/* Quick toggle to test views during landing page construction */}
-          <button 
-            onClick={() => setIsLoggedIn(!isLoggedIn)}
-            className="text-[9px] uppercase font-bold tracking-wider text-slate-500 hover:text-white transition-colors hidden lg:block mr-1"
-          >
-            {isLoggedIn ? "[Guest View]" : "[User View]"}
-          </button>
+          {/* Quick toggle to test states */}
+          
 
           <div className="flex items-center gap-4">
-            <button className="text-slate-400 hover:text-white transition-colors">
-              <Search size={16} />
-            </button>
+            
 
             {/* Notification Bell Dropdown Panel */}
             <div className="relative" ref={dropdownRef}>
-              <button 
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="relative p-1 text-slate-400 hover:text-white transition-colors focus:outline-none"
-              >
-                <Bell size={18} />
-                {unreadCount > 0 && (
-                  <span className="absolute top-0 right-0 flex h-3 w-3 items-center justify-center rounded-full bg-blue-600 text-[7px] font-bold text-white">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
+              
 
               {showNotifications && (
                 <div className="absolute right-0 mt-4 w-80 bg-slate-950/95 backdrop-blur-md rounded-2xl shadow-xl border border-white/10 overflow-hidden z-50">
@@ -126,21 +131,17 @@ const Navbar = () => {
             {/* Conditional Authentication Options */}
             {isLoggedIn ? (
               <>
-                <button className="w-7 h-7 rounded-full bg-white/10 border border-white/10 text-white flex items-center justify-center hover:bg-white/20 transition-all">
-                  <User size={14} />
-                </button>
-                <button className="hidden sm:block px-4 py-1.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-full transition-all active:scale-95">
-                  Ask Question
-                </button>
+              
+                
               </>
             ) : (
-              <button className="px-4 py-1.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-full transition-all active:scale-95">
+              <button className="px-4 py-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-full transition-all active:scale-95">
                 Sign In
               </button>
             )}
           </div>
 
-          <button className="md:hidden text-white">
+          <button className="lg:hidden text-slate-900">
             <Menu size={22} />
           </button>
         </div>
