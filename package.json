@@ -1,0 +1,23 @@
+{
+  "name": "odoo",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix frontend\" \"npm run dev --prefix backend\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IndiraTejaswini/ecosphere-odoo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/IndiraTejaswini/ecosphere-odoo/issues"
+  },
+  "homepage": "https://github.com/IndiraTejaswini/ecosphere-odoo#readme",
+  "description": ""
+}
