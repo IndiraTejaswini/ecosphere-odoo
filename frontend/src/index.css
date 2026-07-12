@@ -9,3 +9,14 @@
   /* You can still keep other fonts for specific elements */
   --font-cursive: "Cedarville Cursive", cursive;
 }
+
+@layer utilities {
+  .animate-gradient-flow {
+    animation: gradient-flow 10s linear infinite;
+  }
+  
+  @keyframes gradient-flow {
+    0% { background-position: 0% center; }
+    100% { background-position: 200% center; }
+  }
+}
