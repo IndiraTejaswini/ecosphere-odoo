@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Menu, X } from 'lucide-react';
+
+// These likely remain the same assuming they are actually in the components folder
 import LineSidebar from '../components/dashboard/LineSidebar';
 import LineNavbar from '../components/dashboard/LineNavbar';
 import ScoreCard from '../components/dashboard/ScoreCard';
-import AnalyticsSection from '../components/dashboard/AnalyticsSection';
-import RecentActivity from '../components/dashboard/RecentActivity';
-import QuickActions from '../components/dashboard/QuickActions';
 
+// FIXED: Paths updated to the current directory ('./') and casing matched to the image
+import AnalyticsSection from './Analyticssection';
+import RecentActivity from './Recentactivity';
+import QuickActions from './Quickactions';
+import NotificationBell from './Notificationbell';
+
+// These are already correct based on the image
 import EnvironmentalDashboard from './EnvironmentalDashboard';
 import SocialDashboard from './SocialDashboard'; 
 import GamificationDashboard from './GamificationDashboard';
@@ -17,62 +23,82 @@ import SettingsDashboard from './SettingsDashboard';
 // --- BACKEND CONNECTION ---
 import api from '../api';
 
+/**
+ * Small stat card for the employee Overview variant. Deliberately NOT reusing
+ * <ScoreCard> here - that component is built around a 0-100 scale (matches
+ * the "X/100" progress-bar visuals from the admin ESG scores), and XP/Points
+ * aren't naturally 0-100 scaled, so forcing them through ScoreCard risked
+ * visually broken/overflowing progress bars for values like "450 XP".
+ */
+function StatCard({ label, value, icon, colorClass }) {
+  return (
+    <div className="bg-white rounded-3xl border border-slate-200/60 p-6 shadow-3xs flex items-center gap-4">
+      <span className="w-11 h-11 rounded-2xl bg-slate-50 flex items-center justify-center text-xl shrink-0">{icon}</span>
+      <div>
+        <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">{label}</span>
+        <span className={`text-2xl font-black font-mono ${colorClass}`}>{value}</span>
+      </div>
+    </div>
+  );
+}
+
+// Admin sees every module; Reports and Settings have zero legitimate employee
+// use (both are 100% requireAdmin on the backend), so they're not offered in
+// nav at all rather than being shown and then blocking on click.
+const ADMIN_NAV_LABELS = ['Overview', 'Environmental', 'Social', 'Governance', 'Gamification', 'Reports', 'Settings'];
+const EMPLOYEE_NAV_LABELS = ['Overview', 'Environmental', 'Social', 'Governance', 'Gamification'];
+
 export default function Dashboard({ currentTab, onTabChange, userRole, onLogout }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const isAdmin = userRole === 'admin';
 
-  // --- BACKEND CONNECTION: live ESG scores for the Overview tab's 4 ScoreCards ---
+  const navLabels = isAdmin ? ADMIN_NAV_LABELS : EMPLOYEE_NAV_LABELS;
+
+  // --- BACKEND CONNECTION: Overview content differs by role ---
+  // Admin: org-wide ESG scores (admin-only endpoint).
+  // Employee: their own XP/points/badges snapshot (their own data, always
+  // accessible) - fetching admin-only ESG scores for an employee would just
+  // 403 every time, so we don't even attempt it.
   const [esgData, setEsgData] = useState(null);
+  const [myProfile, setMyProfile] = useState(null);
   const [scoresLoading, setScoresLoading] = useState(true);
   const [scoresError, setScoresError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadEsgScores() {
+    async function loadOverviewData() {
       setScoresLoading(true);
       setScoresError('');
       try {
-        const result = await api.reports.esgScore();
-        if (!cancelled) setEsgData(result);
-      } catch (err) {
-        if (!cancelled) {
-          setScoresError(
-            err.status === 403
-              ? 'ESG scores are admin-only. Log in as the admin account via TempLogin.'
-              : err.message || 'Failed to load ESG scores'
-          );
+        if (isAdmin) {
+          const result = await api.reports.esgScore();
+          if (!cancelled) setEsgData(result);
+        } else {
+          const me = await api.employees.me();
+          if (!cancelled) setMyProfile(me);
         }
+      } catch (err) {
+        if (!cancelled) setScoresError(err.message || 'Failed to load overview data');
       } finally {
         if (!cancelled) setScoresLoading(false);
       }
     }
 
-    loadEsgScores();
+    loadOverviewData();
     return () => {
       cancelled = true;
     };
-  }, []); // fetched once - Dashboard stays mounted while tabs switch, no need to refetch per-tab
+  }, [isAdmin]);
 
   // Org-wide pillar scores = average of each department's pillar score.
-  // (esg-score returns per-department scores + one overall weighted total;
-  // it doesn't return separate org-wide E/S/G numbers, so we derive them here.)
   const average = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null);
   const environmentalScore = esgData ? average(esgData.departments.map((d) => d.environmentalScore)) : null;
   const socialScore = esgData ? average(esgData.departments.map((d) => d.socialScore)) : null;
   const governanceScore = esgData ? average(esgData.departments.map((d) => d.governanceScore)) : null;
   const overallScore = esgData ? esgData.organizationOverallScore : null;
   // --- END BACKEND CONNECTION (scores) ---
-
-  const navLabels = [
-    'Overview',
-    'Environmental',
-    'Social',
-    'Governance',
-    'Gamification',
-    'Reports',
-    'Settings'
-  ];
 
   const activeIndex = navLabels.indexOf(currentTab) !== -1 ? navLabels.indexOf(currentTab) : 0;
 
@@ -84,6 +110,16 @@ export default function Dashboard({ currentTab, onTabChange, userRole, onLogout 
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // If the current tab isn't in this role's nav (e.g. an employee's stored
+  // ?tab=Reports from an old session, or an admin logged out and an employee
+  // logged in on the same tab), fall back to Overview instead of rendering
+  // a page they can't use.
+  useEffect(() => {
+    if (!navLabels.includes(currentTab) && onTabChange) {
+      onTabChange('Overview');
+    }
+  }, [currentTab, navLabels, onTabChange]);
+
   const handleNavigationClick = (index) => {
     const targetLabel = navLabels[index];
     if (targetLabel && onTabChange) {
@@ -91,30 +127,34 @@ export default function Dashboard({ currentTab, onTabChange, userRole, onLogout 
     }
   };
 
+  function AdminOnlyNotice() {
+    return (
+      <div className="p-12 text-center text-slate-500 bg-white border border-slate-200 rounded-3xl m-8 font-bold shadow-xs">
+        🔒 Admin credentials are required to view this module.
+      </div>
+    );
+  }
+
   const renderMainContent = () => {
     switch (currentTab) {
       case 'Environmental':
-        return <EnvironmentalDashboard />;
-      case 'Social': 
-        return <SocialDashboard />;
+        return <EnvironmentalDashboard userRole={userRole} />;
+      case 'Social':
+        return <SocialDashboard userRole={userRole} />;
       case 'Gamification':
-        return <GamificationDashboard />;
+        return <GamificationDashboard userRole={userRole} />;
       case 'Governance':
-        // Gate preserved from the user's own App.jsx restructure - relocated
-        // here so it lives alongside the rest of the tab routing instead of
-        // being duplicated across two files.
-        if (userRole && userRole !== 'admin') {
-          return (
-            <div className="p-12 text-center text-slate-500 bg-white border border-slate-200 rounded-3xl m-8 font-bold shadow-xs">
-              Access Restricted: Corporate Admin credentials are required to view Governance parameters.
-            </div>
-          );
-        }
-        return <GovernanceDashboard />;
+        // Gap Fix: this used to fully block the entire tab for non-admins.
+        // That was wrong - Policy Acknowledgement is a required EMPLOYEE
+        // feature, and the backend already auto-scopes Compliance Issues to
+        // "owner: me" for non-admins. GovernanceDashboard itself now handles
+        // the nuanced per-tab gating (hide Audits, restrict create actions,
+        // keep Policy Acknowledgements fully open).
+        return <GovernanceDashboard userRole={userRole} />;
       case 'Reports':
-        return <ReportsDashboard />;
+        return isAdmin ? <ReportsDashboard /> : <AdminOnlyNotice />;
       case 'Settings':
-        return <SettingsDashboard />;
+        return isAdmin ? <SettingsDashboard /> : <AdminOnlyNotice />;
       case 'Overview':
       default:
         return (
@@ -160,7 +200,6 @@ export default function Dashboard({ currentTab, onTabChange, userRole, onLogout 
               </div>
             </div>
 
-            {/* --- BACKEND CONNECTION: real scores replace the old hardcoded 82/74/88/81 --- */}
             {scoresError && (
               <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold rounded-2xl px-6 py-4">
                 ⚠️ {scoresError}
@@ -174,28 +213,42 @@ export default function Dashboard({ currentTab, onTabChange, userRole, onLogout 
                     key={i}
                     className="bg-white rounded-3xl border border-slate-200/60 p-8 h-32 animate-pulse flex items-center justify-center text-slate-300 text-xs font-bold uppercase tracking-wider"
                   >
-                    Loading score...
+                    Loading...
                   </div>
                 ))}
               </div>
-            ) : (
+            ) : isAdmin ? (
+              /* --- ADMIN OVERVIEW: org-wide ESG scores --- */
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 <ScoreCard title="Environmental Score" score={environmentalScore ?? 0} glowColor="16, 185, 129" metricColor="text-emerald-600" />
                 <ScoreCard title="Social Score" score={socialScore ?? 0} glowColor="14, 165, 233" metricColor="text-sky-600" />
                 <ScoreCard title="Governance Score" score={governanceScore ?? 0} glowColor="161, 5, 89" customGlowHex="#A10559" metricColor="text-[#A10559]" />
                 <ScoreCard title="Overall ESG Score" score={overallScore ?? 0} glowColor="71, 85, 105" metricColor="text-slate-700" isOverall />
               </div>
+            ) : (
+              /* --- EMPLOYEE OVERVIEW: personal snapshot instead of org-wide
+                   scores, which would just 403 for a non-admin every time --- */
+              myProfile && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <StatCard label="Your XP" value={myProfile.xp ?? 0} icon="⚡" colorClass="text-orange-600" />
+                  <StatCard label="Your Points" value={myProfile.points ?? 0} icon="🎁" colorClass="text-emerald-600" />
+                  <StatCard label="Badges Earned" value={myProfile.badges?.length ?? 0} icon="🏅" colorClass="text-amber-600" />
+                  <StatCard label="Challenges Completed" value={myProfile.completedChallenges ?? 0} icon="🎯" colorClass="text-sky-600" />
+                </div>
+              )
             )}
-            {/* --- END BACKEND CONNECTION --- */}
 
-            <AnalyticsSection />
+            {/* Analytics (org-wide trend + department index) is fully
+                admin-only on the backend - skip it for employees rather than
+                showing two permanently-broken panels. */}
+            {isAdmin && <AnalyticsSection />}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-2">
                 <RecentActivity />
               </div>
               <div className="lg:col-span-1">
-                <QuickActions />
+                <QuickActions onTabChange={onTabChange} userRole={userRole} />
               </div>
             </div>
           </>
@@ -245,14 +298,15 @@ export default function Dashboard({ currentTab, onTabChange, userRole, onLogout 
 
         <div className="flex items-center gap-3">
           <span className="text-[10px] font-mono tracking-tight text-slate-400 hidden sm:inline-block bg-white/90 border border-slate-200/40 px-2.5 py-1 rounded-lg shadow-3xs">
-            QUALIFIER NODE // SECURE
+            {isAdmin ? 'ADMIN NODE // SECURE' : 'EMPLOYEE NODE'}
           </span>
+          <NotificationBell />
           <button
             onClick={onLogout}
             title="Log out"
             className="w-8 h-8 rounded-xl bg-[#0f2438] text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-sm hover:bg-[#16344f] transition-colors cursor-pointer"
           >
-            TZ
+            {isAdmin ? 'AD' : 'EM'}
           </button>
         </div>
       </header>

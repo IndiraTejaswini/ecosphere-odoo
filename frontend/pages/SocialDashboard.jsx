@@ -9,7 +9,8 @@ function formatDate(isoString) {
   return new Date(isoString).toISOString().slice(0, 10);
 }
 
-export default function SocialDashboard() {
+export default function SocialDashboard({ userRole }) {
+  const isAdmin = userRole === 'admin';
   const [activeSubTab, setActiveSubTab] = useState('CSR Activities');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRowId, setSelectedRowId] = useState(null);
@@ -19,6 +20,8 @@ export default function SocialDashboard() {
   const [csrActivities, setCsrActivities] = useState([]);
   const [participations, setParticipations] = useState([]); // shared by CSR Activities' queue panel + Employee Participation tab
   const [diversityMetrics, setDiversityMetrics] = useState([]);
+  const [trainingPrograms, setTrainingPrograms] = useState([]);
+  const [trainingCompletions, setTrainingCompletions] = useState([]);
   const [settings, setSettings] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [csrCategories, setCsrCategories] = useState([]);
@@ -35,7 +38,7 @@ export default function SocialDashboard() {
     setLoading(true);
     setLoadError('');
     try {
-      const [meRes, activitiesRes, participationsRes, diversityRes, settingsRes, deptRes, categoriesRes] = await Promise.all([
+      const [meRes, activitiesRes, participationsRes, diversityRes, settingsRes, deptRes, categoriesRes, programsRes, completionsRes] = await Promise.allSettled([
         api.employees.me(),
         api.csr.listActivities({ limit: 100 }),
         api.csr.listParticipations({ limit: 100 }),
@@ -43,14 +46,48 @@ export default function SocialDashboard() {
         api.settings.get(),
         api.departments.list({ limit: 100 }),
         api.categories.list({ limit: 100 }),
+        api.training.listPrograms({ limit: 100 }),
+        api.training.listCompletions({ limit: 100 }), // auto-scoped to own assignments for non-admin
       ]);
-      setCurrentUser(meRes);
-      setCsrActivities(activitiesRes.data);
-      setParticipations(participationsRes.data);
-      setDiversityMetrics(diversityRes.data);
-      setSettings(settingsRes);
-      setDepartments(deptRes.data);
-      setCsrCategories(categoriesRes.data.filter((c) => c.type === 'CSR Activity'));
+
+      // Gap Fix: was Promise.all() - a single failed call (e.g. diversity
+      // metrics, which nothing else here depends on) used to wipe out ALL 7
+      // results, including `participations` - the exact data the CSR
+      // approval queue and Employee Participation tab both depend on. A
+      // transient failure in an unrelated call could make the entire
+      // approval queue look "broken" or permanently empty.
+      const failures = [];
+      if (meRes.status === 'fulfilled') setCurrentUser(meRes.value);
+      else failures.push('your profile');
+
+      if (activitiesRes.status === 'fulfilled') setCsrActivities(activitiesRes.value.data);
+      else failures.push('CSR activities');
+
+      if (participationsRes.status === 'fulfilled') setParticipations(participationsRes.value.data);
+      else failures.push('participation records');
+
+      if (diversityRes.status === 'fulfilled') setDiversityMetrics(diversityRes.value.data);
+      else failures.push('diversity metrics');
+
+      if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value);
+      else failures.push('settings');
+
+      if (deptRes.status === 'fulfilled') setDepartments(deptRes.value.data);
+      else failures.push('departments');
+
+      if (categoriesRes.status === 'fulfilled') setCsrCategories(categoriesRes.value.data.filter((c) => c.type === 'CSR Activity'));
+      else failures.push('categories');
+
+      if (programsRes.status === 'fulfilled') setTrainingPrograms(programsRes.value.data);
+      else failures.push('training programs');
+
+      if (completionsRes.status === 'fulfilled') setTrainingCompletions(completionsRes.value.data);
+      else failures.push('training completions');
+
+      if (failures.length > 0) {
+        console.error('Failed to load:', failures);
+        setLoadError(`Failed to load: ${failures.join(', ')}. Try refreshing the page.`);
+      }
     } catch (err) {
       setLoadError(err.message || 'Failed to load social data');
     } finally {
@@ -86,6 +123,15 @@ export default function SocialDashboard() {
     }
   }
 
+  async function handleCompleteTraining(completionId) {
+    try {
+      await api.training.complete(completionId);
+      await loadAllData();
+    } catch (err) {
+      alert(err.message || 'Could not mark training complete');
+    }
+  }
+
   async function handleProcessQueue(decision) {
     if (!selectedRowId) return;
     try {
@@ -111,6 +157,8 @@ export default function SocialDashboard() {
       setFormData({ title: '', category: '', description: '', date: '', location: '', expectedParticipants: '' });
     } else if (activeSubTab === 'Diversity Dashboard') {
       setFormData({ department: '', period: new Date().toISOString().slice(0, 7), headcountTotal: '', headcountFemale: '', headcountMale: '', headcountOther: '' });
+    } else if (activeSubTab === 'Training') {
+      setFormData({ title: '', description: '', department: '', mandatory: true, dueDate: '' });
     }
     setIsModalOpen(true);
   }
@@ -129,6 +177,11 @@ export default function SocialDashboard() {
           headcountMale: Number(formData.headcountMale) || 0,
           headcountOther: Number(formData.headcountOther) || 0,
         });
+      } else if (activeSubTab === 'Training') {
+        const body = { ...formData };
+        if (!body.department) delete body.department; // optional - blank means org-wide
+        const result = await api.training.createProgram(body);
+        alert(`✅ Training program created and auto-assigned to ${result.assignedTo} employee(s).`);
       }
       setIsModalOpen(false);
       await loadAllData();
@@ -148,7 +201,7 @@ export default function SocialDashboard() {
     <div className="text-slate-900 w-full space-y-6">
       {/* 1. TOP SUB-NAVIGATION TABS */}
       <div className="flex space-x-2 border-b border-slate-300 pb-2 overflow-x-auto">
-        {['CSR Activities', 'Employee Participation', 'Diversity Dashboard'].map((tab) => (
+        {['CSR Activities', 'Employee Participation', 'Diversity Dashboard', 'Training'].map((tab) => (
           <button
             key={tab}
             onClick={() => handleTabChange(tab)}
@@ -173,13 +226,22 @@ export default function SocialDashboard() {
       {/* 2. DYNAMIC WORKSPACE UTILITY ACTIONS LAYER */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex items-center flex-wrap gap-2">
-          {activeSubTab !== 'Employee Participation' && (
+          {isAdmin && !['Employee Participation', 'Training'].includes(activeSubTab) && (
             <button 
               onClick={openCreateModal}
               className="text-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm transition-all hover:opacity-90"
               style={{ backgroundColor: electricBlue }}
             >
               + New {activeSubTab === 'Diversity Dashboard' ? 'Metric Entry' : 'Activity'}
+            </button>
+          )}
+          {isAdmin && activeSubTab === 'Training' && (
+            <button 
+              onClick={openCreateModal}
+              className="text-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm transition-all hover:opacity-90"
+              style={{ backgroundColor: electricBlue }}
+            >
+              + New Training Program
             </button>
           )}
           
@@ -258,11 +320,23 @@ export default function SocialDashboard() {
             </div>
           </div>
 
-          {/* INTEGRATED PARTICIPATION APPROVAL QUEUE PANEL */}
+          {/* INTEGRATED PARTICIPATION APPROVAL QUEUE PANEL - admin only.
+              Reviewing OTHER people's submissions is a management action
+              (PUT /csr/participations/:id/review is requireAdmin on the
+              backend); employees shouldn't see this panel at all, not just
+              have its buttons fail on click. */}
+          {isAdmin && (
           <BentoGlowEffect glowColor="0, 134, 214" spotlightRadius={260} className="p-1">
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-3 px-1">
-              Employee Participation Approval Queue
-            </h3>
+            <div className="flex items-center justify-between mb-3 px-1">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
+                Employee Participation Approval Queue
+              </h3>
+              {participations.filter((p) => p.approvalStatus === 'Pending').length > 0 && (
+                <span className="text-[10px] font-black text-white bg-amber-500 px-2 py-0.5 rounded-full uppercase tracking-wide">
+                  {participations.filter((p) => p.approvalStatus === 'Pending').length} pending review
+                </span>
+              )}
+            </div>
             
             <div className="overflow-x-auto border border-slate-300 rounded-xl bg-white shadow-sm">
               <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
@@ -345,6 +419,7 @@ export default function SocialDashboard() {
               </div>
             </div>
           </BentoGlowEffect>
+          )}
         </div>
       )}
 
@@ -436,6 +511,84 @@ export default function SocialDashboard() {
         </BentoGlowEffect>
       )}
 
+      {/* ================= VIEW 4: TRAINING (Gap Fix - Section 6 requires
+          "Training Completion" as a Social feature; the backend fully
+          supported it and even blends completion rate into the real Social
+          score, but there was no UI to interact with it at all until now) ================= */}
+      {activeSubTab === 'Training' && (
+        <div className="space-y-8">
+          <div>
+            <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-4">Training Programs</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {trainingPrograms.filter((p) => p.title.toLowerCase().includes(searchTerm.toLowerCase())).map((program) => (
+                <div key={program._id} className="bg-white border border-slate-300 p-5 rounded-2xl shadow-sm">
+                  <div className="flex justify-between items-start gap-2 mb-2">
+                    <h4 className="font-black text-slate-900 tracking-tight text-base leading-tight">{program.title}</h4>
+                    {program.mandatory && (
+                      <span className="text-[9px] font-black bg-rose-50 text-rose-700 border border-rose-300 px-1.5 py-0.5 rounded tracking-wide uppercase whitespace-nowrap">
+                        Mandatory
+                      </span>
+                    )}
+                  </div>
+                  {program.description && <p className="text-xs text-slate-500 mb-2">{program.description}</p>}
+                  <p className="text-[10px] font-mono text-slate-400">
+                    {program.department?.name || 'Org-wide'} {program.dueDate ? `· Due ${formatDate(program.dueDate)}` : ''}
+                  </p>
+                </div>
+              ))}
+              {trainingPrograms.length === 0 && <p className="text-sm text-slate-400 font-bold">No training programs yet.</p>}
+            </div>
+          </div>
+
+          <BentoGlowEffect glowColor="0, 134, 214" spotlightRadius={260} className="p-1">
+            <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-3 px-1">
+              {isAdmin ? 'All Training Assignments' : 'Your Training Assignments'}
+            </h3>
+            <div className="overflow-x-auto border border-slate-300 rounded-xl bg-white shadow-sm">
+              <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
+                <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">
+                  <tr>
+                    {isAdmin && <th className="p-4">Employee</th>}
+                    <th className="p-4">Program</th>
+                    <th className="p-4 text-center">Status</th>
+                    <th className="p-4 text-center">Completed</th>
+                    <th className="p-4 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 text-black font-semibold">
+                  {trainingCompletions
+                    .filter((c) => (c.trainingProgram?.title || '').toLowerCase().includes(searchTerm.toLowerCase()))
+                    .map((c) => (
+                    <tr key={c._id} className="hover:bg-slate-50 transition-colors">
+                      {isAdmin && <td className="p-4 font-black text-slate-900">{c.employee?.name || '—'}</td>}
+                      <td className="p-4 text-slate-800">{c.trainingProgram?.title || '—'}</td>
+                      <td className="p-4 text-center">
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${c.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-300' : 'bg-amber-50 text-amber-600 border-amber-300'}`}>
+                          {c.status}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center font-mono text-xs text-slate-500">{c.completedAt ? formatDate(c.completedAt) : '—'}</td>
+                      <td className="p-4 text-center">
+                        {c.status === 'Assigned' && (isAdmin || c.employee?._id === currentUser?._id) ? (
+                          <button onClick={() => handleCompleteTraining(c._id)} className="text-xs font-black text-white px-3 py-1 rounded" style={{ backgroundColor: electricBlue }}>
+                            Mark Complete
+                          </button>
+                        ) : (
+                          <span className="text-slate-300 text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {trainingCompletions.length === 0 && (
+                    <tr><td colSpan={isAdmin ? 5 : 4} className="p-8 text-center text-slate-400 font-bold">No training assignments yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </BentoGlowEffect>
+        </div>
+      )}
+
       {/* 4. UNIFIED COMPLIANCE FOOTER SIGNATURE NOTE */}
       <div className="pt-4 border-t border-slate-200 flex items-center text-xs text-slate-800 font-bold italic bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
         <span className="mr-2 font-black text-sm select-none" style={{ color: electricBlue }}>ℹ</span>
@@ -446,7 +599,9 @@ export default function SocialDashboard() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsModalOpen(false)}>
           <form onClick={(e) => e.stopPropagation()} onSubmit={handleSave} className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-lg font-black text-slate-900">New {activeSubTab === 'Diversity Dashboard' ? 'Diversity Metric Entry' : 'CSR Activity'}</h3>
+            <h3 className="text-lg font-black text-slate-900">
+              New {activeSubTab === 'Diversity Dashboard' ? 'Diversity Metric Entry' : activeSubTab === 'Training' ? 'Training Program' : 'CSR Activity'}
+            </h3>
 
             {activeSubTab === 'CSR Activities' && (
               <>
@@ -474,6 +629,23 @@ export default function SocialDashboard() {
                 <input type="number" placeholder="Male Headcount" value={formData.headcountMale} onChange={(e) => setFormData({ ...formData, headcountMale: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
                 <input type="number" placeholder="Other Headcount" value={formData.headcountOther} onChange={(e) => setFormData({ ...formData, headcountOther: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
                 <p className="text-xs text-slate-500">Submitting again for the same department + period updates that entry rather than duplicating it.</p>
+              </>
+            )}
+
+            {activeSubTab === 'Training' && (
+              <>
+                <input required placeholder="Program Title" value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <textarea placeholder="Description" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <select value={formData.department || ''} onChange={(e) => setFormData({ ...formData, department: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+                  <option value="">Org-wide (all employees)</option>
+                  {departments.map((d) => <option key={d._id} value={d._id}>{d.name} only</option>)}
+                </select>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input type="checkbox" checked={formData.mandatory} onChange={(e) => setFormData({ ...formData, mandatory: e.target.checked })} />
+                  Mandatory
+                </label>
+                <input type="date" value={formData.dueDate || ''} onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-500">Creating this immediately assigns it to every matching employee (org-wide or department-scoped).</p>
               </>
             )}
 

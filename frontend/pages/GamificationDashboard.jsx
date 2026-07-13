@@ -29,7 +29,8 @@ function deriveParticipationStatus(p) {
   return 'In Progress';
 }
 
-export default function GamificationDashboard() {
+export default function GamificationDashboard({ userRole }) {
+  const isAdmin = userRole === 'admin';
   const [activeSubTab, setActiveSubTab] = useState('Challenges');
 
   // --- BACKEND CONNECTION: real data ---
@@ -56,7 +57,7 @@ export default function GamificationDashboard() {
     setLoading(true);
     setLoadError('');
     try {
-      const [meRes, challengesRes, participationRes, badgesRes, rewardsRes, leaderboardRes, categoriesRes] = await Promise.all([
+      const [meRes, challengesRes, participationRes, badgesRes, rewardsRes, leaderboardRes, categoriesRes] = await Promise.allSettled([
         api.employees.me(),
         api.challenges.list({ limit: 100 }),
         api.challenges.listParticipations({ limit: 100 }),
@@ -65,13 +66,36 @@ export default function GamificationDashboard() {
         api.leaderboard.get(),
         api.categories.list({ limit: 100 }),
       ]);
-      setCurrentUser(meRes);
-      setChallenges(challengesRes.data);
-      setParticipation(participationRes.data);
-      setBadges(badgesRes.data);
-      setRewards(rewardsRes.data);
-      setLeaderboard(leaderboardRes.leaderboard);
-      setChallengeCategories(categoriesRes.data.filter((c) => c.type === 'Challenge'));
+
+      // Gap Fix: was Promise.all() - one failed call used to wipe out ALL 7
+      // results, not just that one. allSettled means a single failed source
+      // degrades gracefully instead of blanking the whole page.
+      const failures = [];
+      if (meRes.status === 'fulfilled') setCurrentUser(meRes.value);
+      else failures.push('your profile');
+
+      if (challengesRes.status === 'fulfilled') setChallenges(challengesRes.value.data);
+      else failures.push('challenges');
+
+      if (participationRes.status === 'fulfilled') setParticipation(participationRes.value.data);
+      else failures.push('challenge participation');
+
+      if (badgesRes.status === 'fulfilled') setBadges(badgesRes.value.data);
+      else failures.push('badges');
+
+      if (rewardsRes.status === 'fulfilled') setRewards(rewardsRes.value.data);
+      else failures.push('rewards');
+
+      if (leaderboardRes.status === 'fulfilled') setLeaderboard(leaderboardRes.value.leaderboard);
+      else failures.push('leaderboard');
+
+      if (categoriesRes.status === 'fulfilled') setChallengeCategories(categoriesRes.value.data.filter((c) => c.type === 'Challenge'));
+      else failures.push('categories');
+
+      if (failures.length > 0) {
+        console.error('Failed to load:', failures);
+        setLoadError(`Failed to load: ${failures.join(', ')}. Try refreshing the page.`);
+      }
 
       // Badge unlock counts: admin-only data (employee list). Fails silently
       // to an empty count map for non-admin users rather than breaking the tab.
@@ -220,7 +244,7 @@ export default function GamificationDashboard() {
       {/* 2. AUTOMATION ROW OPERATORS CONTROLS */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex items-center flex-wrap gap-2">
-          {['Challenges', 'Badges', 'Rewards'].includes(activeSubTab) && (
+          {isAdmin && ['Challenges', 'Badges', 'Rewards'].includes(activeSubTab) && (
             <button 
               onClick={openCreateModal}
               className="text-white px-4 py-2 rounded font-bold text-sm shadow-sm transition-all hover:opacity-90"
@@ -284,14 +308,20 @@ export default function GamificationDashboard() {
                     <div>
                       <div className="flex justify-between items-start mb-4">
                         <span className="text-3xl select-none">{DIFFICULTY_ICONS[item.difficulty] || '🎯'}</span>
-                        <select
-                          value={item.status}
-                          onChange={(e) => handleStatusChange(item._id, e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-[10px] font-black tracking-widest uppercase px-2 py-0.5 rounded border bg-green-50 text-green-700 border-green-300 cursor-pointer"
-                        >
-                          {CHALLENGE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        {isAdmin ? (
+                          <select
+                            value={item.status}
+                            onChange={(e) => handleStatusChange(item._id, e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-[10px] font-black tracking-widest uppercase px-2 py-0.5 rounded border bg-green-50 text-green-700 border-green-300 cursor-pointer"
+                          >
+                            {CHALLENGE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        ) : (
+                          <span className="text-[10px] font-black tracking-widest uppercase px-2 py-0.5 rounded border bg-green-50 text-green-700 border-green-300">
+                            {item.status}
+                          </span>
+                        )}
                       </div>
                       <h4 className="font-black text-slate-900 tracking-tight text-lg mb-1">{item.title}</h4>
                       <div className="text-xs font-bold text-slate-500 space-y-1 mt-2">

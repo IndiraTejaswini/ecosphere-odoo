@@ -9,8 +9,16 @@ function formatDate(isoString) {
   return new Date(isoString).toISOString().slice(0, 10);
 }
 
-export default function GovernanceDashboard() {
-  const [activeSubTab, setActiveSubTab] = useState('Audits');
+// Audits are fully admin-only on the backend (even GET), matching the spec's
+// wording precisely: employees "will only be able to view [compliance
+// issues], not create or delete audits" - audits themselves aren't in an
+// employee's view at all, only issues are.
+const EMPLOYEE_TABS = ['Policies', 'Policy Acknowledgements', 'Compliance Issues'];
+const ADMIN_TABS = ['Policies', 'Policy Acknowledgements', 'Audits', 'Compliance Issues'];
+
+export default function GovernanceDashboard({ userRole }) {
+  const isAdmin = userRole === 'admin';
+  const [activeSubTab, setActiveSubTab] = useState(isAdmin ? 'Audits' : 'Policies');
 
   // --- BACKEND CONNECTION: real data ---
   const [policies, setPolicies] = useState([]);
@@ -34,30 +42,62 @@ export default function GovernanceDashboard() {
     setLoading(true);
     setLoadError('');
     try {
-      const [policiesRes, auditsRes, issuesRes, deptRes] = await Promise.all([
+      const [policiesRes, auditsRes, issuesRes, deptRes] = await Promise.allSettled([
         api.policies.list({ limit: 100 }),
-        api.governance.listAudits({ limit: 100 }),
+        // Audits is fully admin-only (even GET) - don't even attempt it for
+        // employees, since a "failure" here would just produce a needless
+        // error banner for a tab they can't see anyway.
+        isAdmin ? api.governance.listAudits({ limit: 100 }) : Promise.resolve({ data: [] }),
         api.governance.listComplianceIssues({ limit: 100 }),
         api.departments.list({ limit: 100 }),
       ]);
-      setPolicies(policiesRes.data);
-      setAudits(auditsRes.data);
-      setIssues(issuesRes.data);
-      setDepartments(deptRes.data);
+
+      // Gap Fix: was Promise.all() - a single failed call used to wipe out
+      // ALL 4 results. allSettled means one failed source degrades
+      // gracefully instead of blanking the whole page.
+      const failures = [];
+      let policiesData = [];
+      if (policiesRes.status === 'fulfilled') {
+        policiesData = policiesRes.value.data;
+        setPolicies(policiesData);
+      } else failures.push('policies');
+
+      if (auditsRes.status === 'fulfilled') setAudits(auditsRes.value.data);
+      else if (isAdmin) failures.push('audits');
+
+      if (issuesRes.status === 'fulfilled') setIssues(issuesRes.value.data);
+      else failures.push('compliance issues');
+
+      if (deptRes.status === 'fulfilled') setDepartments(deptRes.value.data);
+      else failures.push('departments');
+
+      if (failures.length > 0) {
+        console.error('Failed to load:', failures);
+        setLoadError(`Failed to load: ${failures.join(', ')}. Try refreshing the page.`);
+      }
 
       // Acknowledgements + employee roster: admin-only data. No single
       // "list every acknowledgement" endpoint exists on the backend, so we
       // call the per-policy endpoint once per policy and combine client-side.
-      // Fine at hackathon scale (a handful of policies); a dedicated backend
-      // endpoint would be the real fix at larger scale.
+      // Gap Fix: this used to await each policy's acknowledgements
+      // SEQUENTIALLY in a for-loop (slow, and one failure aborted the rest).
+      // Now fetched in parallel via allSettled, so a single policy's
+      // acknowledgement fetch failing doesn't lose the others.
       try {
         const { data: allEmployees } = await api.employees.list({ limit: 100 });
         setEmployees(allEmployees);
         const employeesById = Object.fromEntries(allEmployees.map((e) => [e._id, e]));
 
+        const ackResults = await Promise.allSettled(
+          policiesData.map((policy) => api.governance.listAcknowledgements(policy._id))
+        );
+
         const ackRows = [];
-        for (const policy of policiesRes.data) {
-          const acks = await api.governance.listAcknowledgements(policy._id);
+        policiesData.forEach((policy, idx) => {
+          const result = ackResults[idx];
+          if (result.status !== 'fulfilled') return; // skip this one policy, keep the rest
+
+          const acks = result.value;
           const ackedIds = new Set(acks.map((a) => a.employee._id));
 
           acks.forEach((a) => {
@@ -86,7 +126,7 @@ export default function GovernanceDashboard() {
                 });
               });
           }
-        }
+        });
         setAcknowledgements(ackRows);
       } catch {
         setEmployees([]);
@@ -159,7 +199,7 @@ export default function GovernanceDashboard() {
       
       {/* 1. TOP SUB-NAVIGATION TABS */}
       <div className="flex space-x-2 border-b border-slate-300 mb-6 pb-2 overflow-x-auto">
-        {['Policies', 'Policy Acknowledgements', 'Audits', 'Compliance Issues'].map((tab) => (
+        {(isAdmin ? ADMIN_TABS : EMPLOYEE_TABS).map((tab) => (
           <button
             key={tab}
             onClick={() => handleTabChange(tab)}
@@ -184,13 +224,15 @@ export default function GovernanceDashboard() {
       {/* 2. DYNAMIC WORKSPACE UTILITY ACTION ROW */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div className="flex items-center flex-wrap gap-2">
-          <button 
-            onClick={openCreateModal}
-            className="text-white px-4 py-2 rounded font-bold text-sm shadow-sm transition-all hover:opacity-90"
-            style={{ backgroundColor: govPlum }}
-          >
-            + {activeSubTab === 'Audits' ? 'New Audit' : activeSubTab === 'Compliance Issues' ? 'New Violation Flag' : activeSubTab === 'Policy Acknowledgements' ? 'Acknowledge a Policy' : 'New Policy'}
-          </button>
+          {(isAdmin || activeSubTab === 'Policy Acknowledgements') && (
+            <button 
+              onClick={openCreateModal}
+              className="text-white px-4 py-2 rounded font-bold text-sm shadow-sm transition-all hover:opacity-90"
+              style={{ backgroundColor: govPlum }}
+            >
+              + {activeSubTab === 'Audits' ? 'New Audit' : activeSubTab === 'Compliance Issues' ? 'New Violation Flag' : activeSubTab === 'Policy Acknowledgements' ? 'Acknowledge a Policy' : 'New Policy'}
+            </button>
+          )}
           
           <button 
             onClick={() => api.reports.exportCsv({ module: 'governance' }).catch((err) => alert(err.message))}
@@ -267,7 +309,12 @@ export default function GovernanceDashboard() {
       {activeSubTab === 'Policy Acknowledgements' && (
         <BentoGlowEffect glowColor="161, 5, 89" spotlightRadius={280} className="p-1">
           <div className="overflow-x-auto border border-slate-300 rounded-xl bg-white shadow-sm">
-            {employees.length === 0 && (
+            {employees.length === 0 && !isAdmin && (
+              <p className="text-xs text-slate-600 bg-slate-50 border-b border-slate-200 p-3 font-semibold">
+                ℹ️ This table (who's Attested/Overdue org-wide) needs admin access to compute. You can still acknowledge policies yourself using the "+ Acknowledge a Policy" button above.
+              </p>
+            )}
+            {employees.length === 0 && isAdmin && (
               <p className="text-xs text-amber-700 bg-amber-50 border-b border-amber-200 p-3 font-semibold">⚠️ This view requires admin access to compute Overdue rows.</p>
             )}
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
@@ -434,6 +481,11 @@ export default function GovernanceDashboard() {
       {/* ================= VIEW 4: COMPLIANCE ISSUES MAIN ENGINE ================= */}
       {activeSubTab === 'Compliance Issues' && (
         <BentoGlowEffect glowColor="161, 5, 89" spotlightRadius={280} className="p-1">
+          {!isAdmin && (
+            <p className="text-xs text-slate-500 font-semibold mb-3 px-1">
+              Showing compliance issues where you're the assigned owner. You can view these but can't create, edit, or delete them - only an Admin can.
+            </p>
+          )}
           <div className="overflow-x-auto border border-slate-300 rounded-xl bg-white shadow-sm">
             <table className="min-w-full divide-y divide-slate-300 text-left text-sm">
               <thead className="bg-slate-50 text-black font-black tracking-wide text-xs uppercase border-b border-slate-300">

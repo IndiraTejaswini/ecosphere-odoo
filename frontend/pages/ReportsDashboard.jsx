@@ -51,14 +51,26 @@ export default function ReportsDashboard() {
     setLoading(true);
     setLoadError('');
     try {
-      const [deptRes, challengesRes, categoriesRes] = await Promise.all([
+      const [deptRes, challengesRes, categoriesRes] = await Promise.allSettled([
         api.departments.list({ limit: 100 }),
         api.challenges.list({ limit: 100 }),
         api.categories.list({ limit: 100 }),
       ]);
-      setDepartments(deptRes.data);
-      setChallenges(challengesRes.data);
-      setCsrCategories(categoriesRes.data.filter((c) => c.type === 'CSR Activity'));
+
+      const failures = [];
+      if (deptRes.status === 'fulfilled') setDepartments(deptRes.value.data);
+      else failures.push('departments');
+
+      if (challengesRes.status === 'fulfilled') setChallenges(challengesRes.value.data);
+      else failures.push('challenges');
+
+      if (categoriesRes.status === 'fulfilled') setCsrCategories(categoriesRes.value.data.filter((c) => c.type === 'CSR Activity'));
+      else failures.push('categories');
+
+      if (failures.length > 0) {
+        console.error('Failed to load:', failures);
+        setLoadError(`Failed to load: ${failures.join(', ')}. Try refreshing the page.`);
+      }
 
       try {
         const { data } = await api.employees.list({ limit: 100 });

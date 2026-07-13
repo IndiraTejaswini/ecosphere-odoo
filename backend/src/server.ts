@@ -37,9 +37,6 @@ app.use(express.urlencoded({ extended: true }));
 // Local "Evidence" Storage: serve /uploads statically (Boss Level Add-On #12)
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
-// 👉 MOVED HEALTH CHECK HERE (Above all other routes so it doesn't get blocked)
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date() }));
-
 app.use('/api/auth', authRoutes);
 app.use('/api/employees', employeeRoutes);
 // masterDataRoutes internally defines /departments, /categories,
@@ -57,6 +54,8 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/diversity', diversityRoutes);
 app.use('/api/training', trainingRoutes);
+
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date() }));
 
 // 404 handler
 app.use('/api', (_req, res) => res.status(404).json({ message: 'Route not found' }));

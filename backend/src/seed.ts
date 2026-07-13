@@ -11,7 +11,10 @@ import {
   ESGPolicy,
   Badge,
   Reward,
+  ProductESGProfile,
 } from './models/MasterData';
+import fs from 'fs';
+import path from 'path';
 import Employee from './models/Employee';
 import CarbonTransaction from './models/CarbonTransaction';
 import { CSRActivity, EmployeeParticipation } from './models/CSR';
@@ -27,12 +30,34 @@ const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || 'admin@ecosphere.com';
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'Admin@123';
 const USER_PASSWORD = process.env.SEED_USER_PASSWORD || 'User@123';
 
+// Gap Fix: seed data previously referenced '/uploads/seed-demo-proof.jpg' as
+// a "fake proof" for demo purposes, but never actually wrote that file to
+// disk - clicking "View proof" on any seeded row would 404. This writes a
+// real, tiny placeholder image so those links genuinely resolve.
+const SEED_PROOF_FILENAME = 'seed-demo-proof.jpg';
+const SEED_PROOF_PATH = `/uploads/${SEED_PROOF_FILENAME}`;
+
+function ensureSeedProofFileExists() {
+  const uploadsDir = path.join(__dirname, '..', 'uploads');
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+  const filePath = path.join(uploadsDir, SEED_PROOF_FILENAME);
+  if (fs.existsSync(filePath)) return;
+
+  // Smallest possible valid JPEG (1x1 grey pixel), base64-encoded, so
+  // "View proof" opens a real (if tiny) image instead of a broken link.
+  const tinyJpegBase64 =
+    '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==';
+  fs.writeFileSync(filePath, Buffer.from(tinyJpegBase64, 'base64'));
+}
+
 async function clearDatabase() {
   console.log('🧹 Clearing existing collections...');
   await Promise.all([
     Department.deleteMany({}),
     Category.deleteMany({}),
     EmissionFactor.deleteMany({}),
+    ProductESGProfile.deleteMany({}),
     EnvironmentalGoal.deleteMany({}),
     ESGPolicy.deleteMany({}),
     Badge.deleteMany({}),
@@ -57,6 +82,9 @@ async function clearDatabase() {
 async function seed() {
   await connectDB();
   await clearDatabase();
+
+  console.log('🖼️  Writing seed proof placeholder file...');
+  ensureSeedProofFileExists();
 
   /* ------------------------------- Settings ------------------------------- */
   console.log('⚙️  Creating default Settings...');
@@ -94,6 +122,17 @@ async function seed() {
     EmissionFactor.create({ name: 'Domestic Air Travel', activityType: 'Travel', unit: 'km', factorValue: 0.15 }),
     EmissionFactor.create({ name: 'Natural Gas', activityType: 'Manufacturing', unit: 'm3', factorValue: 1.9 }),
     EmissionFactor.create({ name: 'Packaging Waste', activityType: 'Expense', unit: 'kg', factorValue: 0.5 }),
+  ]);
+
+  /* ---------------------------- Product ESG Profiles ------------------------- */
+  // Gap Fix: this model had ZERO seed data before - the "Product ESG Profiles"
+  // tab was always empty regardless of frontend wiring.
+  console.log('📦 Creating product ESG profiles...');
+  await Promise.all([
+    ProductESGProfile.create({ productName: 'Recycled Kraft Packaging', sku: 'ECO-BOX-01', carbonFootprint: 0.24, esgScore: 92, notes: 'Corrugated cardboard, FSC certified' }),
+    ProductESGProfile.create({ productName: 'Polyethylene Stretch Wrap', sku: 'SLM-PLAS-44', carbonFootprint: 1.85, esgScore: 38, notes: 'Virgin LDPE - high footprint, flagged for redesign' }),
+    ProductESGProfile.create({ productName: 'Water-Activated Paper Tape', sku: 'BIO-TAPE-09', carbonFootprint: 0.12, esgScore: 88, notes: 'Kraft paper / starch adhesive' }),
+    ProductESGProfile.create({ productName: 'Standard Shipping Pallet', sku: 'PAL-STD-12', carbonFootprint: 4.6, esgScore: 61, notes: 'Reclaimed hardwood, reused up to 10 cycles' }),
   ]);
 
   /* --------------------------------- Badges ------------------------------ */
@@ -155,6 +194,11 @@ async function seed() {
   // accurate automatically as each employee above was created.
 
   /* --------------------------- Policy Acknowledgements ---------------------------- */
+  // Gap Fix: previously PolicyAcknowledgement was never actually seeded at
+  // all, despite being a core Governance transactional model. Each employee
+  // acknowledges each policy with ~70% probability, giving the Governance
+  // score's policy-acknowledgement component (and the daily reminder cron,
+  // which nudges whoever's left) real, mixed data to demo.
   console.log('✅ Seeding policy acknowledgements...');
   for (const emp of standardUsers) {
     for (const policy of esgPolicies) {
@@ -191,11 +235,20 @@ async function seed() {
       const approvalStatus = faker.helpers.arrayElement(['Approved', 'Approved', 'Pending', 'Rejected'] as const);
       const points = approvalStatus === 'Approved' ? faker.number.int({ min: 10, max: 40 }) : 0;
 
+      // Gap Fix: previously ONLY non-Pending rows got a proofUrl, meaning
+      // every Pending row was permanently unapprovable whenever Evidence
+      // Requirement is enabled (the default) - there was no way to demo a
+      // successful approval without first disabling that setting. Now ~60%
+      // of Pending rows also get proof attached, giving a realistic mix:
+      // some approvable immediately, some correctly blocked until evidence
+      // is provided - which is itself a good feature to demo, not a bug.
+      const hasProof = approvalStatus !== 'Pending' || faker.datatype.boolean({ probability: 0.6 });
+
       await EmployeeParticipation.create({
         employee: emp._id,
         department: emp.department,
         activity: activity._id,
-        proofUrl: approvalStatus !== 'Pending' ? '/uploads/seed-demo-proof.jpg' : undefined,
+        proofUrl: hasProof ? SEED_PROOF_PATH : undefined,
         approvalStatus,
         pointsEarned: points,
         completionDate: approvalStatus !== 'Pending' ? faker.date.recent({ days: 20 }) : undefined,
@@ -242,7 +295,7 @@ async function seed() {
         employee: emp._id,
         department: emp.department,
         progress: approvalStatus === 'Approved' ? 100 : faker.number.int({ min: 10, max: 90 }),
-        proofUrl: approvalStatus === 'Approved' ? '/uploads/seed-demo-proof.jpg' : undefined,
+        proofUrl: approvalStatus === 'Approved' ? SEED_PROOF_PATH : undefined,
         approvalStatus,
         xpAwarded,
       });
@@ -271,6 +324,7 @@ async function seed() {
   );
 
   for (const audit of audits) {
+    // 2 issues per audit for a livelier demo (6 total across 3 audits)
     for (let j = 0; j < 2; j++) {
       const owner = faker.helpers.arrayElement(standardUsers);
       await ComplianceIssue.create({
@@ -284,6 +338,8 @@ async function seed() {
           'Unresolved water discharge permit renewal',
         ]),
         owner: owner._id,
+        // Deliberately in the past for ~half of these, so the hourly cron job
+        // has real overdue issues to escalate during your demo.
         dueDate: faker.datatype.boolean() ? faker.date.recent({ days: 10 }) : faker.date.future({ years: 0.1 }),
         status: 'Open',
       });
@@ -345,7 +401,7 @@ async function seed() {
     const dept = departments[i % departments.length];
     const factor = faker.helpers.arrayElement(emissionFactors);
     const quantity = faker.number.int({ min: 10, max: 500 });
-    const timestamp = new Date(startDate.getTime() + i * 16 * 60 * 60 * 1000); 
+    const timestamp = new Date(startDate.getTime() + i * 16 * 60 * 60 * 1000); // spread ~16h apart
 
     const tx = new CarbonTransaction({
       department: dept._id,
@@ -355,17 +411,17 @@ async function seed() {
       calculatedCO2e: quantity * factor.factorValue,
       timestamp,
       createdBy: admin._id,
-      previousHash: 'seed_prev_' + Math.random().toString(36).substring(2, 15),
-      currentHash: 'seed_curr_' + Math.random().toString(36).substring(2, 15),
     });
-    await tx.save(); 
+    await tx.save(); // sequential .save() -> anomaly detection + hash chain run correctly in order
   }
 
+  // A handful of deliberate anomalies (>=10x a department's average) so the
+  // Anomaly Detection feature has something real to flag for your demo.
   console.log('🚨 Injecting 3 deliberate anomalies for demo purposes...');
   for (let i = 0; i < 3; i++) {
     const dept = departments[i];
     const factor = emissionFactors[0];
-    const hugeQuantity = 8000; 
+    const hugeQuantity = 8000; // far beyond normal 10-500 range above
     const tx = new CarbonTransaction({
       department: dept._id,
       emissionFactor: factor._id,
@@ -374,13 +430,18 @@ async function seed() {
       calculatedCO2e: hugeQuantity * factor.factorValue,
       timestamp: new Date(),
       createdBy: admin._id,
-      previousHash: 'seed_prev_' + Math.random().toString(36).substring(2, 15),
-      currentHash: 'seed_curr_' + Math.random().toString(36).substring(2, 15),
     });
     await tx.save();
   }
 
   /* --------------------------- Environmental Goals ------------------------- */
+  // Created HERE (after transactions, not before) and seeded with each
+  // department's REAL accumulated confirmed CO2e as the starting currentCO2 -
+  // deliberately NOT relying on the CarbonTransaction post-save hook to
+  // backfill this retroactively, since that hook only affects transactions
+  // saved AFTER a matching goal already exists. Every goal created after this
+  // point (including these) will continue to accumulate live via that hook
+  // as new transactions come in.
   console.log('🎯 Creating environmental goals from real accumulated emissions...');
   const departmentTotals = await CarbonTransaction.aggregate([
     { $match: { status: 'Confirmed' } },
@@ -390,6 +451,13 @@ async function seed() {
 
   for (const [idx, dept] of departments.entries()) {
     const currentCO2 = Math.round(totalsByDept.get(String(dept._id)) || 0);
+    // Mix of "on track" (plenty of headroom left -> healthy score) and
+    // "at risk" (already near/over budget -> low score) for demo variety.
+    // Multiplier ranges are tuned against the scoring formula above
+    // (100 * (1 - current/target)), which is intentionally steep near the
+    // target boundary - a department "on track" needs real headroom (2-3.5x
+    // current usage) to actually show a healthy score, not just any target
+    // nominally larger than current.
     const onTrack = idx % 2 === 0;
     const targetCO2 = Math.max(
       500,
@@ -408,6 +476,10 @@ async function seed() {
   }
 
   /* ------------------------- Historical Score Snapshots ------------------------ */
+  // Powers the dashboard's "Emission Trend (12 mo)" style chart, which needs
+  // real history to plot - not just the one live snapshot. We compute the
+  // CURRENT live score once, then backfill 11 prior months with plausible
+  // jitter trending toward it, so day-one of your demo already has a chart.
   console.log('📈 Backfilling 12 months of ESG score history for trend charts...');
   const { departments: liveScores, weighting } = await computeDepartmentScores();
 
@@ -425,11 +497,14 @@ async function seed() {
       const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n * 10) / 10));
 
       if (monthsAgo === 0) {
+        // Current month = exactly the live computed score, no jitter.
         environmentalScore = dept.environmentalScore;
         socialScore = dept.socialScore;
         governanceScore = dept.governanceScore;
         totalScore = dept.totalScore;
       } else {
+        // Older months trend slightly worse than "now", with random jitter -
+        // simulates gradual improvement over the year rather than a flat line.
         const improvementFactor = monthsAgo * faker.number.float({ min: 0.5, max: 1.5 });
         const jitter = () => faker.number.float({ min: -4, max: 4 });
 

@@ -33,19 +33,37 @@ export default function SettingsDashboard() {
     setLoading(true);
     setLoadError('');
     try {
-      const [deptRes, catRes, settingsRes] = await Promise.all([
+      const [deptRes, catRes, settingsRes] = await Promise.allSettled([
         api.departments.list({ limit: 100 }),
         api.categories.list({ limit: 100 }),
         api.settings.get(),
       ]);
-      setDepartments(deptRes.data);
-      setCategories(catRes.data);
-      setSettings(settingsRes);
-      setWeightingForm({
-        environmental: Math.round(settingsRes.esgWeighting.environmental * 100),
-        social: Math.round(settingsRes.esgWeighting.social * 100),
-        governance: Math.round(settingsRes.esgWeighting.governance * 100),
-      });
+
+      // Gap Fix: was Promise.all() - a single failed call used to wipe out
+      // ALL 3 results, including Settings itself, which every toggle on this
+      // page depends on.
+      const failures = [];
+      if (deptRes.status === 'fulfilled') setDepartments(deptRes.value.data);
+      else failures.push('departments');
+
+      if (catRes.status === 'fulfilled') setCategories(catRes.value.data);
+      else failures.push('categories');
+
+      if (settingsRes.status === 'fulfilled') {
+        setSettings(settingsRes.value);
+        setWeightingForm({
+          environmental: Math.round(settingsRes.value.esgWeighting.environmental * 100),
+          social: Math.round(settingsRes.value.esgWeighting.social * 100),
+          governance: Math.round(settingsRes.value.esgWeighting.governance * 100),
+        });
+      } else {
+        failures.push('settings');
+      }
+
+      if (failures.length > 0) {
+        console.error('Failed to load:', failures);
+        setLoadError(`Failed to load: ${failures.join(', ')}. Try refreshing the page.`);
+      }
     } catch (err) {
       setLoadError(err.message || 'Failed to load configuration data');
     } finally {
